@@ -1,0 +1,23 @@
+# Android Studio / Gradle
+.gradle/
+build/
+app/build/
+*.iml
+.idea/
+local.properties
+.DS_Store
+
+# User-specific / Temporary
+temp/
+artifacts/
+.artifacts/
+*.apk
+*.aab
+
+# Kotlin
+.kotlin/
+
+# Secrets
+*.jks
+*.keystore
+google-services.json
