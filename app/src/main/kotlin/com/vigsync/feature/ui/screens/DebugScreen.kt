@@ -1,0 +1,144 @@
+package com.vigsync.feature.ui.screens
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.vigsync.core.mqtt.LogEntry
+import java.text.SimpleDateFormat
+import java.util.*
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DebugScreen(viewModel: DebugViewModel = viewModel()) {
+    var selectedTab by remember { mutableIntStateOf(0) }
+    val tabs = listOf("MQTT", "App Logs", "Storage")
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Diagnostics") },
+                actions = {
+                    IconButton(onClick = { viewModel.clearLogs() }) {
+                        Icon(Icons.Default.DeleteSweep, contentDescription = "Clear Logs")
+                    }
+                }
+            )
+        }
+    ) { innerPadding ->
+        Column(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
+            TabRow(selectedTabIndex = selectedTab) {
+                tabs.forEachIndexed { index, title ->
+                    Tab(
+                        selected = selectedTab == index,
+                        onClick = { selectedTab = index },
+                        text = { Text(title) }
+                    )
+                }
+            }
+
+            when (selectedTab) {
+                0 -> LogList(viewModel.mqttLogs)
+                1 -> LogList(viewModel.appLogs)
+                2 -> StorageList(viewModel)
+            }
+        }
+    }
+}
+
+@Composable
+fun StorageList(viewModel: DebugViewModel) {
+    val rawMessages by viewModel.rawMessages.collectAsState()
+    val deviceStatus by viewModel.deviceStatus.collectAsState()
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        item {
+            Text("Cold Storage (Latest Device Status)", style = MaterialTheme.typography.titleMedium)
+        }
+        
+        items(deviceStatus) { status ->
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(8.dp)) {
+                    Text("${status.name} (${status.deviceId})", style = MaterialTheme.typography.labelMedium)
+                    Text("Battery: ${status.batteryLevel}% | Online: ${status.isOnline}", style = MaterialTheme.typography.bodySmall)
+                    Text("Last Updated: ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(status.lastSeen))}", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+
+        item {
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            Text("Hot Storage (Recent Raw Packets)", style = MaterialTheme.typography.titleMedium)
+        }
+
+        items(rawMessages) { msg ->
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (msg.isProcessed) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primaryContainer
+                )
+            ) {
+                Column(modifier = Modifier.padding(8.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(if (msg.isProcessed) "PROCESSED" else "NEW", style = MaterialTheme.typography.labelSmall)
+                        Text(SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date(msg.timestamp)), style = MaterialTheme.typography.labelSmall)
+                    }
+                    Text(msg.topic, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                    Text(msg.payload.take(50) + "...", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun LogList(logsFlow: kotlinx.coroutines.flow.StateFlow<List<LogEntry>>) {
+    val logs by logsFlow.collectAsState()
+    
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items(logs) { log ->
+            DebugLogItem(log.message, log.status, log.timestamp)
+        }
+    }
+}
+
+@Composable
+fun DebugLogItem(message: String, status: String, timestamp: Long) {
+    val timeFormatter = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
+    val time = timeFormatter.format(Date(timestamp))
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = when (status) {
+                "ERROR" -> MaterialTheme.colorScheme.errorContainer
+                "SUCCESS" -> Color(0xFFE8F5E9)
+                "TRACE" -> Color(0xFFFFF3E0)
+                else -> MaterialTheme.colorScheme.surfaceVariant
+            }
+        )
+    ) {
+        Column(modifier = Modifier.padding(8.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(status, style = MaterialTheme.typography.labelSmall, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                Text(time, style = MaterialTheme.typography.labelSmall)
+            }
+            Text(message, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
