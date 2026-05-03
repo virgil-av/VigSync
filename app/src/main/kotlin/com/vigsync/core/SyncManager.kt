@@ -323,4 +323,6 @@ class SyncManager private constructor(context: Context) {
     }
     
     fun getMqttManager() = mqttManager
+    
+    fun getDao(): VigSyncDao = database.dao()
 }

@@ -19,6 +19,13 @@ class AppPreferences(private val context: Context) {
         val BROKER_USERNAME = stringPreferencesKey("broker_username")
         val BROKER_PASSWORD = stringPreferencesKey("broker_password")
         val USE_TLS = booleanPreferencesKey("use_tls")
+        val MQTT_VERSION = intPreferencesKey("mqtt_version") // 3 for 3.1.1, 5 for v5
+    }
+
+    val mqttVersion: Flow<Int> = context.dataStore.data.map { it[MQTT_VERSION] ?: 5 }
+
+    suspend fun saveMqttVersion(version: Int) {
+        context.dataStore.edit { it[MQTT_VERSION] = version }
     }
 
     val brokerUsername: Flow<String?> = context.dataStore.data.map { it[BROKER_USERNAME] }

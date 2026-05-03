@@ -35,3 +35,9 @@ data class DeviceStatusEntity(
     val isOnline: Boolean,
     val lastSeen: Long
 )
+
+@Entity(tableName = "host_protocols")
+data class HostProtocolEntity(
+    @PrimaryKey val host: String,
+    val version: Int // 3 or 5
+)

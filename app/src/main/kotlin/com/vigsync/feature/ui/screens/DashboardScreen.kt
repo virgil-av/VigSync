@@ -82,6 +82,7 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
                                 android.Manifest.permission.READ_SMS,
                                 android.Manifest.permission.RECEIVE_SMS,
                                 android.Manifest.permission.READ_CALL_LOG,
+                                android.Manifest.permission.READ_PHONE_STATE,
                                 android.Manifest.permission.READ_CONTACTS
                             )
                             if (android.os.Build.VERSION.SDK_INT >= 33) {

@@ -43,6 +43,12 @@ interface VigSyncDao {
 
     @Query("DELETE FROM events")
     suspend fun clearAllEvents()
+
+    @Query("SELECT version FROM host_protocols WHERE host = :host")
+    suspend fun getProtocolForHost(host: String): Int?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun saveHostProtocol(hostProtocol: HostProtocolEntity)
 }
 
 class Converters {
@@ -57,7 +63,7 @@ class Converters {
     fun toDirection(value: String) = EventDirection.valueOf(value)
 }
 
-@Database(entities = [RawMessage::class, EventEntity::class, DeviceStatusEntity::class], version = 1)
+@Database(entities = [RawMessage::class, EventEntity::class, DeviceStatusEntity::class, HostProtocolEntity::class], version = 2)
 @TypeConverters(Converters::class)
 abstract class VigSyncDatabase : RoomDatabase() {
     abstract fun dao(): VigSyncDao
@@ -72,7 +78,9 @@ abstract class VigSyncDatabase : RoomDatabase() {
                     context.applicationContext,
                     VigSyncDatabase::class.java,
                     "vigsync_db"
-                ).build()
+                )
+                .fallbackToDestructiveMigration()
+                .build()
                 INSTANCE = instance
                 instance
             }

@@ -17,6 +17,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import android.net.Uri
 import android.provider.Settings
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 
 @Composable
 fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
@@ -115,17 +118,20 @@ fun MqttSettingsTab(viewModel: SettingsViewModel) {
 @Composable
 fun PermissionsSettingsTab() {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     
     var hasSms by remember { mutableStateOf(false) }
     var hasCall by remember { mutableStateOf(false) }
-    var hasNotif by remember { mutableStateOf(false) }
+    var hasPhone by remember { mutableStateOf(false) }
     var hasCamera by remember { mutableStateOf(false) }
+    var hasNotif by remember { mutableStateOf(false) }
     var hasListener by remember { mutableStateOf(false) }
     var isBatteryUnrestricted by remember { mutableStateOf(false) }
 
     fun updateStates() {
         hasSms = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_SMS) == android.content.pm.PackageManager.PERMISSION_GRANTED
         hasCall = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_CALL_LOG) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        hasPhone = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_PHONE_STATE) == android.content.pm.PackageManager.PERMISSION_GRANTED
         hasCamera = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED
         hasNotif = if (android.os.Build.VERSION.SDK_INT >= 33) {
             androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -136,6 +142,19 @@ fun PermissionsSettingsTab() {
         
         val powerManager = context.getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
         isBatteryUnrestricted = powerManager.isIgnoringBatteryOptimizations(context.packageName)
+    }
+
+    // Lifecycle observer to refresh when returning to the app
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                updateStates()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -161,6 +180,9 @@ fun PermissionsSettingsTab() {
         }
         PermissionItem("Call Log Access", hasCall) {
             permissionLauncher.launch(android.Manifest.permission.READ_CALL_LOG)
+        }
+        PermissionItem("Phone Status", hasPhone) {
+            permissionLauncher.launch(android.Manifest.permission.READ_PHONE_STATE)
         }
         PermissionItem("Camera (QR Scanning)", hasCamera) {
             permissionLauncher.launch(android.Manifest.permission.CAMERA)
@@ -238,7 +260,7 @@ fun PermissionsSettingsTab() {
                 if (!hasListener) {
                     Button(
                         onClick = {
-                            val intent = android.content.Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply {
+                            val intent = android.content.Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply {
                                 addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                             }
                             context.startActivity(intent)

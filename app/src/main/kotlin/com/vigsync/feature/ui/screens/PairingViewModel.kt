@@ -14,6 +14,7 @@ import java.util.UUID
 
 import com.vigsync.core.SyncManager
 import com.vigsync.core.models.Device
+import com.vigsync.data.local.DeviceStatusEntity
 
 class PairingViewModel(application: Application) : AndroidViewModel(application) {
     private val appPreferences = AppPreferences(application)
@@ -41,8 +42,10 @@ class PairingViewModel(application: Application) : AndroidViewModel(application)
                 appPreferences.saveTopicPrefix(prefix)
             }
 
-            val deviceId = android.os.Build.MODEL + "_" + android.os.Build.ID
-            val data = PairingData(url, port, key!!, prefix, android.os.Build.MODEL, deviceId)
+            val androidId = android.provider.Settings.Secure.getString(getApplication<Application>().contentResolver, android.provider.Settings.Secure.ANDROID_ID)
+            val deviceId = "${android.os.Build.MODEL}_$androidId"
+            
+            val data = PairingData(url, port, key, prefix, android.os.Build.MODEL, deviceId)
             val json = try {
                 pairingManager.generatePairingJson(data)
             } catch (e: Exception) {
@@ -62,7 +65,7 @@ class PairingViewModel(application: Application) : AndroidViewModel(application)
             appPreferences.saveSharedKey(data.sharedKey)
             appPreferences.saveTopicPrefix(data.topicPrefix)
             
-            // Add to paired devices
+            // Step 1: Update the SyncManager list
             val syncManager = SyncManager.getInstance(getApplication())
             val device = Device(
                 id = data.deviceId,
@@ -71,8 +74,20 @@ class PairingViewModel(application: Application) : AndroidViewModel(application)
                 lastSeen = System.currentTimeMillis()
             )
             syncManager.addPairedDevice(device)
+
+            // Step 2: Manually insert a DeviceStatusEntity with the CORRECT ID
+            // This ensures the placeholder and the heartbeat share the same key
+            val dao = syncManager.getDao()
+            val entity = DeviceStatusEntity(
+                deviceId = data.deviceId,
+                name = data.deviceName,
+                batteryLevel = 0,
+                isOnline = false,
+                lastSeen = System.currentTimeMillis()
+            )
+            dao.updateDeviceStatus(entity)
+
             syncManager.restart()
-            
             _pairingComplete.emit(data.deviceName)
         }
     }
