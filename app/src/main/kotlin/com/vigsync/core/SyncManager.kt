@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.util.*
+import java.util.concurrent.ConcurrentHashMap
 
 import com.vigsync.core.models.SyncStatus
 import com.vigsync.core.models.EventRecord
@@ -27,6 +28,19 @@ class SyncManager private constructor(context: Context) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val appContext = context.applicationContext
     
+    // --- Unified Event Buffer ---
+    private val eventBuffer = ConcurrentHashMap<String, BufferedEvent>()
+    private val BUFFER_WINDOW = 3500L // 3.5 seconds
+
+    private data class BufferedEvent(
+        val type: String,
+        var data: String,
+        val timestamp: Long,
+        var priority: Int, // 0: Telephony, 1: Notification, 2: CallLog
+        var job: Job? = null
+    )
+    // ----------------------------
+
     private val database: VigSyncDatabase by lazy { 
         VigSyncDatabase.getInstance(appContext) 
     }
@@ -301,7 +315,51 @@ class SyncManager private constructor(context: Context) {
     }
 
     fun publishEvent(type: String, data: String) {
-        val timestamp = System.currentTimeMillis()
+        val priority = when {
+            data.startsWith("Call") -> 2 // CallLog
+            type == "NOTIFICATION" && (data.contains("dialer") || data.contains("telecom")) -> 1 // System Dialer Notification
+            else -> 0
+        }
+
+        // Deduplication key for calls is the number (if extractable)
+        val key = if (type == "CALL" || type == "NOTIFICATION" && data.contains("Incoming")) {
+            extractPhoneNumber(data) ?: UUID.randomUUID().toString()
+        } else {
+            UUID.randomUUID().toString()
+        }
+
+        scope.launch {
+            val existing = eventBuffer[key]
+            if (existing != null) {
+                if (priority >= existing.priority) {
+                    existing.job?.cancel()
+                    existing.priority = priority
+                    existing.data = data
+                    scheduleBufferPublication(key)
+                }
+            } else {
+                eventBuffer[key] = BufferedEvent(type, data, System.currentTimeMillis(), priority)
+                scheduleBufferPublication(key)
+            }
+        }
+    }
+
+    private fun extractPhoneNumber(data: String): String? {
+        // Simple regex to find potential phone numbers in the message
+        val pattern = Regex("(\\+?\\d[\\d\\-\\s]{7,15})")
+        return pattern.find(data)?.value?.replace("\\s|-".toRegex(), "")
+    }
+
+    private fun scheduleBufferPublication(key: String) {
+        val event = eventBuffer[key] ?: return
+        event.job = scope.launch {
+            delay(BUFFER_WINDOW)
+            publishNow(event.type, event.data, event.timestamp)
+            eventBuffer.remove(key)
+        }
+    }
+
+    private fun publishNow(type: String, data: String, timestamp: Long) {
         MqttLogger.logEvent(EventRecord(type, data, timestamp, SyncStatus.PENDING))
 
         scope.launch {

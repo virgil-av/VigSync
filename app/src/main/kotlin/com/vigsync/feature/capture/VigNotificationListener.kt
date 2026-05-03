@@ -44,11 +44,18 @@ class VigNotificationListener : NotificationListenerService() {
         val category = sbn.notification.category
         
         // System Dialer packages
-        val dialers = setOf("com.google.android.dialer", "com.android.phone", "com.android.server.telecom", "com.samsung.android.dialer")
+        val dialers = setOf(
+            "com.google.android.dialer", 
+            "com.android.phone", 
+            "com.android.server.telecom", 
+            "com.samsung.android.dialer",
+            "com.whatsapp",
+            "org.telegram.messenger"
+        )
         // SMS packages
         val smsApps = setOf("com.google.android.apps.messaging", "com.android.messaging", "com.samsung.android.messaging")
         
-        if (pkg in dialers && (category == Notification.CATEGORY_CALL || category == Notification.CATEGORY_MISSED_CALL)) return true
+        if (pkg in dialers && (category == Notification.CATEGORY_CALL || category == Notification.CATEGORY_MISSED_CALL || category == Notification.CATEGORY_MESSAGE)) return true
         if (pkg in smsApps) return true
         
         return false
