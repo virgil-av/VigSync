@@ -46,11 +46,17 @@ fun QrScanner(onScan: (String) -> Unit) {
 
     if (hasCameraPermission) {
         val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
+        val executor = remember { Executors.newSingleThreadExecutor() }
+
+        DisposableEffect(Unit) {
+            onDispose {
+                executor.shutdown()
+            }
+        }
         
         AndroidView(
             factory = { ctx ->
                 val previewView = PreviewView(ctx)
-                val executor = Executors.newSingleThreadExecutor()
                 
                 cameraProviderFuture.addListener({
                     val cameraProvider = cameraProviderFuture.get()

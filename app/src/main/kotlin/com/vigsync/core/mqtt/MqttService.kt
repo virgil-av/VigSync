@@ -40,12 +40,19 @@ class MqttService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Always ensure SyncManager is running when service is active
+        SyncManager.getInstance(applicationContext).start()
+        
         when (intent?.action) {
             ACTION_START -> startObservers()
             ACTION_STOP -> stopSelf()
             null -> {
-                // If system restarts service, ensure it's in foreground
+                // If system restarts service, ensure it's in foreground and observers are active if they were before
                 startForeground(NOTIFICATION_ID, createNotification())
+                if (isRunning) {
+                    isRunning = false // reset to allow restart
+                    startObservers()
+                }
             }
         }
         return START_STICKY

@@ -12,7 +12,10 @@ interface VigSyncDao {
     suspend fun insertRaw(message: RawMessage)
 
     @Query("SELECT * FROM raw_messages WHERE isProcessed = 0 ORDER BY timestamp ASC")
-    suspend fun getUnprocessedRaw(): List<RawMessage>
+    fun getUnprocessedFlow(): Flow<List<RawMessage>>
+
+    @Query("UPDATE raw_messages SET isProcessed = 1 WHERE id = :id")
+    suspend fun markAsProcessed(id: Long)
 
     @Query("SELECT * FROM raw_messages ORDER BY timestamp DESC LIMIT 50")
     fun getRecentRaw(): Flow<List<RawMessage>>

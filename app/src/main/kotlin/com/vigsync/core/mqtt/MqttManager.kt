@@ -232,10 +232,16 @@ class MqttManager {
             return future
         }
         return if (currentVersion == 5) {
-            client5?.publishWith()?.topic(topic)?.payload(payload)?.send()!!
+            client5?.publishWith()?.topic(topic)?.payload(payload)?.send() ?: failedFuture<Any>(Exception("v5 client null"))
         } else {
-            client3?.publishWith()?.topic(topic)?.payload(payload)?.send()!!
+            client3?.publishWith()?.topic(topic)?.payload(payload)?.send() ?: failedFuture<Any>(Exception("v3 client null"))
         }
+    }
+
+    private fun <T> failedFuture(ex: Throwable): CompletableFuture<T> {
+        val f = CompletableFuture<T>()
+        f.completeExceptionally(ex)
+        return f
     }
 
     fun disconnect(): CompletableFuture<Void> {

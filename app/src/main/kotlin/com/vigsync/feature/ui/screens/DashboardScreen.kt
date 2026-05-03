@@ -116,48 +116,59 @@ fun DashboardScreen(viewModel: DashboardViewModel = viewModel()) {
         Spacer(modifier = Modifier.height(24.dp))
         
         Text("Paired Devices", style = MaterialTheme.typography.titleLarge, modifier = Modifier.align(Alignment.Start))
-        if (devices.isEmpty()) {
-            Text("No remote devices paired", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
-        } else {
-            devices.forEach { device ->
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (device.isOnline) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
-                    )
-                ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
+        
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth().weight(0.4f),
+            contentPadding = PaddingValues(vertical = 8.dp)
+        ) {
+            if (devices.isEmpty()) {
+                item {
+                    Text("No remote devices paired", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
+                }
+            } else {
+                items(devices.size) { index ->
+                    val device = devices[index]
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (device.isOnline) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                        )
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(device.name, style = MaterialTheme.typography.titleMedium)
-                            Text(if (device.isOnline) "Connected" else "Offline", style = MaterialTheme.typography.bodySmall)
-                            val time = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(device.lastSeen))
-                            Text("Updated: $time", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
-                        }
-                        Text("battery lvl: ${device.batteryLevel}%", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 8.dp))
-                        IconButton(onClick = { viewModel.removeDevice(device.deviceId) }) {
-                            Icon(Icons.Default.Delete, contentDescription = "Remove Device", tint = MaterialTheme.colorScheme.error)
+                        Row(
+                            modifier = Modifier.padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(device.name, style = MaterialTheme.typography.titleMedium)
+                                Text(if (device.isOnline) "Connected" else "Offline", style = MaterialTheme.typography.bodySmall)
+                                val time = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(device.lastSeen))
+                                Text("Updated: $time", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                            }
+                            Text("${device.batteryLevel}%", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 8.dp))
+                            IconButton(onClick = { viewModel.removeDevice(device.deviceId) }) {
+                                Icon(Icons.Default.Delete, contentDescription = "Remove Device", tint = MaterialTheme.colorScheme.error)
+                            }
                         }
                     }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(16.dp))
         
         Text("Recent Activity", style = MaterialTheme.typography.titleLarge, modifier = Modifier.align(Alignment.Start))
         
-        if (events.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No recent activity", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
-            }
-        } else {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(events.size) { index ->
-                    val event = events[index]
-                    DebugLogItem(event.message, event.status, event.timestamp)
+        Box(modifier = Modifier.fillMaxWidth().weight(0.6f)) {
+            if (events.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("No recent activity", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
+                }
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    items(events.size) { index ->
+                        val event = events[index]
+                        DebugLogItem(event.message, event.status, event.timestamp)
+                    }
                 }
             }
         }

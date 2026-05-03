@@ -75,8 +75,7 @@ class SyncManager private constructor(context: Context) {
         MqttLogger.logApp("SyncManager: Event-Driven Worker Started", "TRACE")
         scope.launch {
             // STAGE 3: Use Flow to observe Hot Storage reactively
-            database.dao().getRecentRaw().collect { list ->
-                val unprocessed = list.filter { !it.isProcessed }.sortedBy { it.timestamp }
+            database.dao().getUnprocessedFlow().collect { unprocessed ->
                 if (unprocessed.isNotEmpty()) {
                     MqttLogger.logApp("STAGE 3: Reactive Trigger - ${unprocessed.size} items", "TRACE")
                 }
@@ -89,7 +88,7 @@ class SyncManager private constructor(context: Context) {
                         } else if (msg.topic.contains("/events/")) {
                             processIncomingEvent(msg)
                         }
-                        database.dao().updateRaw(msg.copy(isProcessed = true))
+                        database.dao().markAsProcessed(msg.id)
                         MqttLogger.logApp("STAGE 5: ID ${msg.id} COMPLETED", "SUCCESS")
                     } catch (e: Exception) {
                         MqttLogger.logApp("Processor ERROR on ID ${msg.id}: ${e.message}", "ERROR")

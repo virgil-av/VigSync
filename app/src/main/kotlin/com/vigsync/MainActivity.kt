@@ -16,8 +16,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // Start MQTT Connection immediately
-        SyncManager.getInstance(this).start()
+        // MqttService handles observers and MQTT connection now
 
         setContent {
             VigSyncTheme {
