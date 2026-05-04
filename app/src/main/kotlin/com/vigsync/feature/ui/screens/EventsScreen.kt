@@ -9,12 +9,16 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.graphics.drawable.toBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vigsync.data.local.EventEntity
 import com.vigsync.core.models.SyncStatus
@@ -63,8 +67,26 @@ fun EventsScreen(viewModel: EventsViewModel = viewModel()) {
 
 @Composable
 fun EventCard(event: EventEntity) {
+    val context = LocalContext.current
+    val pm = context.packageManager
     val timeFormatter = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
     val time = timeFormatter.format(Date(event.timestamp))
+
+    var displayData = event.data
+    var appLabel: String? = null
+    var packageName: String? = null
+
+    if (event.type == "NOTIFICATION" && event.data.contains("|")) {
+        val parts = event.data.split("|", limit = 3)
+        if (parts.size == 3) {
+            appLabel = parts[0]
+            packageName = parts[1]
+            displayData = parts[2]
+        }
+    } else if (event.type == "CALL" && event.data.startsWith("WhatsApp Call")) {
+        appLabel = "WhatsApp"
+        packageName = "com.whatsapp"
+    }
     
     val typeColor = when (event.type) {
         "CALL" -> Color(0xFF2196F3) // Blue
@@ -84,10 +106,24 @@ fun EventCard(event: EventEntity) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                // App Icon or Type Icon
+                val appIcon: androidx.compose.ui.graphics.ImageBitmap? = remember(packageName) {
+                    packageName?.let {
+                        try {
+                            pm.getApplicationIcon(it).toBitmap().asImageBitmap()
+                        } catch (_: Exception) { null }
+                    }
+                }
+
+                if (appIcon != null) {
+                    androidx.compose.foundation.Image(
+                        bitmap = appIcon,
+                        contentDescription = null,
+                        modifier = Modifier.size(32.dp)
+                    )
+                } else {
                     Icon(
                         imageVector = when (event.type) {
                             "SMS" -> Icons.Default.Sms
@@ -97,15 +133,27 @@ fun EventCard(event: EventEntity) {
                         },
                         contentDescription = null,
                         tint = typeColor,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(32.dp)
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+                }
+
+                Spacer(modifier = Modifier.width(12.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = event.type,
-                        style = MaterialTheme.typography.labelLarge,
+                        text = appLabel ?: event.type,
+                        style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        color = typeColor
+                        color = if (appLabel != null) MaterialTheme.colorScheme.onSurface else typeColor
                     )
+                    if (packageName != null) {
+                        Text(
+                            text = packageName,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.outline,
+                            fontSize = 10.sp
+                        )
+                    }
                 }
                 
                 if (event.sourceDevice != null) {
@@ -127,7 +175,7 @@ fun EventCard(event: EventEntity) {
             Spacer(modifier = Modifier.height(12.dp))
 
             Text(
-                text = event.data,
+                text = displayData,
                 style = MaterialTheme.typography.bodyMedium,
                 lineHeight = 20.sp,
                 color = MaterialTheme.colorScheme.onSurface

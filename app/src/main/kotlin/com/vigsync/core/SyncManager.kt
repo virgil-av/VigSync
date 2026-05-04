@@ -263,6 +263,22 @@ class SyncManager private constructor(context: Context) {
 
         if (!isEnabled) return
 
+        var displayTitle = "$type from $sourceDevice"
+        var displayText = data
+
+        if (type == "NOTIFICATION" && data.contains("|")) {
+            val parts = data.split("|", limit = 3)
+            if (parts.size == 3) {
+                val appLabel = parts[0]
+                // val pkg = parts[1]
+                val content = parts[2]
+                displayTitle = "$appLabel from $sourceDevice"
+                displayText = content
+            }
+        } else if (type == "CALL") {
+            displayTitle = "Phone Call from $sourceDevice"
+        }
+
         val intent = Intent(appContext, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
         }
@@ -270,14 +286,13 @@ class SyncManager private constructor(context: Context) {
 
         val builder = NotificationCompat.Builder(appContext, SYNC_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
-            .setContentTitle("$type from $sourceDevice")
-            .setContentText(data)
+            .setContentTitle(displayTitle)
+            .setContentText(displayText)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
 
         val notificationManager = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        // Use a unique ID based on hash to show multiple notifications if they come fast
         notificationManager.notify("$type$data".hashCode(), builder.build())
     }
 

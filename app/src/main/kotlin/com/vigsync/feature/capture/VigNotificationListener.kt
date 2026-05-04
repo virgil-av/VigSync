@@ -41,8 +41,13 @@ class VigNotificationListener : NotificationListenerService() {
                 return@launch
             }
 
+            if (isNoisyNotification(sbn)) {
+                Log.d("VigSync", "Ignored noisy notification from $packageName")
+                return@launch
+            }
+
             val extras = sbn.notification.extras
-            val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: "No Title"
+            val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
             val text = extractBody(sbn)
 
             // Deduplication Logic: Ignore if it's likely handled by Dialer/SMS observers
@@ -59,9 +64,44 @@ class VigNotificationListener : NotificationListenerService() {
                 return@launch
             }
 
-            Log.d("VigSync", "Notification from $packageName: $title - $text")
-            SyncManager.getInstance(applicationContext).publishEvent("NOTIFICATION", "$packageName: $title - $text")
+            val pm = applicationContext.packageManager
+            val appLabel = try {
+                val info = pm.getApplicationInfo(packageName, 0)
+                pm.getApplicationLabel(info).toString()
+            } catch (e: Exception) { packageName }
+
+            var eventType = "NOTIFICATION"
+            var eventData = "$appLabel|$packageName|$title: $text"
+
+            // Special handling for WhatsApp VoIP
+            if (packageName == "com.whatsapp" && sbn.notification.category == Notification.CATEGORY_CALL) {
+                eventType = "CALL"
+                eventData = "WhatsApp Call: $title"
+            }
+
+            Log.d("VigSync", "Event Captured ($eventType) from $packageName: $title - $text")
+            SyncManager.getInstance(applicationContext).publishEvent(eventType, eventData)
         }
+    }
+
+    private fun isNoisyNotification(sbn: StatusBarNotification): Boolean {
+        val n = sbn.notification
+        val text = n.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
+        val title = n.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
+        
+        // 1. WhatsApp noise
+        if (sbn.packageName == "com.whatsapp") {
+            val noisyPatterns = listOf("Checking for new messages", "WhatsApp Web is active", "WhatsApp Web is currently active")
+            if (noisyPatterns.any { title.contains(it) || text.contains(it) }) return true
+            // Filter out summary notifications like "2 new messages"
+            if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) return true
+            if (text.matches(Regex("\\d+ new messages?"))) return true
+        }
+
+        // 2. General heartbeat / progress noise
+        if (n.category == Notification.CATEGORY_PROGRESS || n.category == Notification.CATEGORY_SERVICE) return true
+        
+        return false
     }
 
     private fun isLikelyRedundant(sbn: StatusBarNotification): Boolean {
