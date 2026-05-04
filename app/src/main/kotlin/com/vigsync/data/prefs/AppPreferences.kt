@@ -12,17 +12,25 @@ private val Context.dataStore by preferencesDataStore(name = "settings")
 
 class AppPreferences(private val context: Context) {
 
-    private val masterKey = MasterKey.Builder(context)
-        .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-        .build()
+    private val encryptedPrefs by lazy {
+        try {
+            val masterKey = MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
 
-    private val encryptedPrefs = EncryptedSharedPreferences.create(
-        context,
-        "secure_settings",
-        masterKey,
-        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-    )
+            EncryptedSharedPreferences.create(
+                context,
+                "secure_settings",
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+        } catch (e: Exception) {
+            // Fallback or log error. In a real app, we might want to clear the corrupted prefs
+            // or use a non-encrypted fallback if security allows, but here we just want to avoid crashing.
+            context.getSharedPreferences("secure_settings_fallback", Context.MODE_PRIVATE)
+        }
+    }
 
     companion object {
         val BROKER_URL = stringPreferencesKey("broker_url")
@@ -37,6 +45,8 @@ class AppPreferences(private val context: Context) {
         val NOTIF_CALLS = booleanPreferencesKey("notif_calls")
         val NOTIF_SMS = booleanPreferencesKey("notif_sms")
         val NOTIF_OTHER = booleanPreferencesKey("notif_other")
+
+        val SYNC_ENABLED = booleanPreferencesKey("sync_enabled")
 
         // App-specific filtering
         val OBSERVED_APP_PACKAGES = stringSetPreferencesKey("observed_app_packages")
@@ -111,6 +121,12 @@ class AppPreferences(private val context: Context) {
             it[NOTIF_SMS] = sms
             it[NOTIF_OTHER] = other
         }
+    }
+
+    val syncEnabled: Flow<Boolean> = context.dataStore.data.map { it[SYNC_ENABLED] ?: false }
+
+    suspend fun saveSyncEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[SYNC_ENABLED] = enabled }
     }
 
     val observedAppPackages: Flow<Set<String>> = context.dataStore.data.map { it[OBSERVED_APP_PACKAGES] ?: emptySet() }

@@ -7,6 +7,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.Image
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.*
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vigsync.feature.ui.components.QrScanner
@@ -15,15 +18,20 @@ import kotlinx.coroutines.flow.collectLatest
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PairingScreen(
+    startWithScanner: Boolean = false,
     viewModel: PairingViewModel = viewModel(),
-    onPairingSuccess: () -> Unit = {}
+    onPairingSuccess: () -> Unit = {},
+    onNavigateBack: () -> Unit = {}
 ) {
     val qrBitmap by viewModel.qrCode.collectAsState()
-    var isScanning by remember { mutableStateOf(false) }
+    var isScanning by remember { mutableStateOf(startWithScanner) }
     var pairedDeviceName by remember { mutableStateOf<String?>(null) }
     var showSuccessDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
+        if (!startWithScanner) {
+            viewModel.generateMyQr()
+        }
         viewModel.pairingComplete.collectLatest { deviceName ->
             pairedDeviceName = deviceName
             showSuccessDialog = true
@@ -48,7 +56,14 @@ fun PairingScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(title = { Text("Pair Device") })
+            TopAppBar(
+                title = { Text("Pair Device") },
+                navigationIcon = {
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                }
+            )
         }
     ) { innerPadding ->
         Column(

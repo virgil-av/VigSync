@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -17,10 +18,16 @@ import com.vigsync.feature.capture.CallLogObserver
 class MqttService : Service() {
 
     companion object {
-        const val ACTION_START = "com.vigsync.app.START_OBSERVERS"
-        const val ACTION_STOP = "com.vigsync.app.STOP_OBSERVERS"
+        const val ACTION_START = "com.vigsync.app.START_SERVICE"
+        const val ACTION_STOP = "com.vigsync.app.STOP_SERVICE"
+        const val ACTION_START_SYNC = "com.vigsync.app.START_OBSERVERS"
+        const val ACTION_STOP_SYNC = "com.vigsync.app.STOP_OBSERVERS"
+        
         private var isRunning = false
         fun isServiceRunning() = isRunning
+
+        private var isSyncing = false
+        fun isSyncActive() = isSyncing
     }
 
     private val CHANNEL_ID = "VigSyncMqttChannel"
@@ -31,26 +38,45 @@ class MqttService : Service() {
         super.onCreate()
         createNotificationChannel()
         // Android 14+ requires calling startForeground immediately
-        startForeground(NOTIFICATION_ID, createNotification())
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(NOTIFICATION_ID, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            startForeground(NOTIFICATION_ID, createNotification())
+        }
     }
 
     override fun onDestroy() {
         stopObservers()
+        isRunning = false
         super.onDestroy()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // Always ensure SyncManager is running when service is active
         SyncManager.getInstance(applicationContext).start()
+        isRunning = true
         
         when (intent?.action) {
-            ACTION_START -> startObservers()
+            ACTION_START -> {
+                MqttLogger.log("Service Started: Maintaining connection", "INFO")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    startForeground(NOTIFICATION_ID, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+                } else {
+                    startForeground(NOTIFICATION_ID, createNotification())
+                }
+            }
             ACTION_STOP -> stopSelf()
+            ACTION_START_SYNC -> startObservers()
+            ACTION_STOP_SYNC -> stopObservers()
             null -> {
-                // If system restarts service, ensure it's in foreground and observers are active if they were before
-                startForeground(NOTIFICATION_ID, createNotification())
-                if (isRunning) {
-                    isRunning = false // reset to allow restart
+                // If system restarts service, ensure it's in foreground
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    startForeground(NOTIFICATION_ID, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+                } else {
+                    startForeground(NOTIFICATION_ID, createNotification())
+                }
+                if (isSyncing) {
+                    isSyncing = false // reset to allow restart
                     startObservers()
                 }
             }
@@ -59,10 +85,14 @@ class MqttService : Service() {
     }
 
     private fun startObservers() {
-        if (isRunning) return
+        if (isSyncing) return
         
-        // Ensure foreground is started even if we don't have all permissions
-        startForeground(NOTIFICATION_ID, createNotification())
+        // Ensure foreground is started
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(NOTIFICATION_ID, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            startForeground(NOTIFICATION_ID, createNotification())
+        }
         
         val canReadCallLog = androidx.core.content.ContextCompat.checkSelfPermission(
             this, android.Manifest.permission.READ_CALL_LOG
@@ -70,19 +100,19 @@ class MqttService : Service() {
 
         if (canReadCallLog) {
             callLogObserver = CallLogObserver(this).also { it.register() }
-            MqttLogger.log("Foreground observers started (Call Log active)", "SUCCESS")
+            MqttLogger.log("Sync active (Observers started)", "SUCCESS")
         } else {
-            MqttLogger.log("Foreground observers started (Call Log DISABLED - missing permission)", "WARNING")
+            MqttLogger.log("Sync active (Call Log DISABLED - missing permission)", "WARNING")
         }
         
-        isRunning = true
+        isSyncing = true
     }
 
     private fun stopObservers() {
         callLogObserver?.unregister()
         callLogObserver = null
-        isRunning = false
-        MqttLogger.log("Foreground observers stopped", "INFO")
+        isSyncing = false
+        MqttLogger.log("Sync stopped (Observers detached)", "INFO")
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

@@ -3,14 +3,15 @@ package com.vigsync.core.mqtt
 import com.hivemq.client.mqtt.MqttClient
 import com.hivemq.client.mqtt.mqtt3.Mqtt3AsyncClient
 import com.hivemq.client.mqtt.mqtt5.Mqtt5AsyncClient
-import com.vigsync.VigSyncApplication
+import com.vigsync.core.SyncManager
 import com.vigsync.data.local.HostProtocolEntity
+import android.content.Context
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
@@ -20,23 +21,29 @@ import java.util.concurrent.CompletableFuture
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
+enum class MqttConnectionStatus {
+    CONNECTED, CONNECTING, DISCONNECTED
+}
+
 class MqttManager {
     private var client5: Mqtt5AsyncClient? = null
     private var client3: Mqtt3AsyncClient? = null
     private var currentVersion: Int = 5
     private val connectionMutex = Mutex()
+    private val pendingSubscriptions = mutableListOf<String>()
 
     // Tied to Application lifecycle
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     
-    private val _connectionStatus = MutableSharedFlow<Boolean>(replay = 1)
-    val connectionStatus = _connectionStatus.asSharedFlow()
+    private val _connectionStatus = MutableStateFlow(MqttConnectionStatus.DISCONNECTED)
+    val connectionStatus = _connectionStatus.asStateFlow()
 
     init {
         MqttLogger.logApp("MqttManager: Created (hash: ${this.hashCode()})", "TRACE")
     }
 
     suspend fun connect(
+        context: Context,
         brokerUrl: String,
         port: Int,
         clientId: String = UUID.randomUUID().toString(),
@@ -45,6 +52,7 @@ class MqttManager {
         password: String? = null
     ) {
         connectionMutex.withLock {
+            _connectionStatus.value = MqttConnectionStatus.CONNECTING
             val cleanUrl = brokerUrl
                 .replace("mqtt://", "", ignoreCase = true)
                 .replace("tcp://", "", ignoreCase = true)
@@ -55,12 +63,12 @@ class MqttManager {
             MqttLogger.log("Stopping previous connections before new attempt...", "INFO")
             disconnectInternal().await()
 
-            val dao = VigSyncApplication.getInstance().syncManager.getDao()
+            val dao = SyncManager.getInstance(context).getDao()
             val knownVersion = dao.getProtocolForHost(cleanUrl)
 
             if (knownVersion != null) {
                 MqttLogger.log("Known host found: $cleanUrl (v$knownVersion)", "INFO")
-                val success = tryConnectOnce(cleanUrl, port, clientId, useTls, username, password, knownVersion)
+                val success = tryConnectOnce(context, cleanUrl, port, clientId, useTls, username, password, knownVersion)
                 if (success) return@withLock
                 MqttLogger.log("Known version failed, starting re-detection dance", "WARNING")
             }
@@ -70,7 +78,7 @@ class MqttManager {
             // Stage A: Try MQTT 5 (3 attempts)
             MqttLogger.log("Dance Stage A: Attempting MQTT v5 for $cleanUrl", "INFO")
             for (i in 1..3) {
-                if (tryConnectOnce(cleanUrl, port, clientId, useTls, username, password, 5)) {
+                if (tryConnectOnce(context, cleanUrl, port, clientId, useTls, username, password, 5)) {
                     MqttLogger.log("v5 Success! Saving to Registry", "SUCCESS")
                     dao.saveHostProtocol(HostProtocolEntity(cleanUrl, 5))
                     return@withLock
@@ -81,7 +89,7 @@ class MqttManager {
             // Stage B: Try MQTT 3 (3 attempts)
             MqttLogger.log("Dance Stage B: Attempting MQTT v3 for $cleanUrl", "INFO")
             for (i in 1..3) {
-                if (tryConnectOnce(cleanUrl, port, clientId, useTls, username, password, 3)) {
+                if (tryConnectOnce(context, cleanUrl, port, clientId, useTls, username, password, 3)) {
                     MqttLogger.log("v3 Success! Saving to Registry", "SUCCESS")
                     dao.saveHostProtocol(HostProtocolEntity(cleanUrl, 3))
                     return@withLock
@@ -90,20 +98,21 @@ class MqttManager {
             }
 
             MqttLogger.log("Dance Failed: Connectivity issue for $cleanUrl", "ERROR")
-            _connectionStatus.emit(false)
+            _connectionStatus.value = MqttConnectionStatus.DISCONNECTED
         }
     }
 
     private suspend fun tryConnectOnce(
+        context: Context,
         url: String, port: Int, clientId: String, useTls: Boolean, 
         user: String?, pass: String?, version: Int
     ): Boolean {
         return try {
             MqttLogger.log("Trial: Connecting v$version to $url", "INFO")
             val future = if (version == 5) {
-                connectV5(url, port, clientId, useTls, user, pass)
+                connectV5(context, url, port, clientId, useTls, user, pass)
             } else {
-                connectV3(url, port, clientId, useTls, user, pass)
+                connectV3(context, url, port, clientId, useTls, user, pass)
             }
             val ack = future.await()
             ack != null
@@ -115,6 +124,7 @@ class MqttManager {
     }
 
     private fun connectV5(
+        context: Context,
         url: String, port: Int, clientId: String, useTls: Boolean, 
         user: String?, pass: String?
     ): CompletableFuture<*> {
@@ -131,7 +141,7 @@ class MqttManager {
             .addDisconnectedListener { 
                 val reason = it.cause?.message ?: "Normal Closure"
                 MqttLogger.log("Disconnected (v5): $reason", "ERROR")
-                _connectionStatus.tryEmit(false)
+                _connectionStatus.value = MqttConnectionStatus.DISCONNECTED
             }
             .buildAsync()
 
@@ -152,12 +162,18 @@ class MqttManager {
 
         return connectBuilder.send().thenApply {
             MqttLogger.log("Connected to v5 broker: $url", "INFO")
-            _connectionStatus.tryEmit(true)
+            _connectionStatus.value = MqttConnectionStatus.CONNECTED
+            
+            // Re-subscribe to pending topics
+            val subs = synchronized(pendingSubscriptions) { pendingSubscriptions.toList() }
+            subs.forEach { subscribe(context, it) }
+
             it
         }
     }
 
     private fun connectV3(
+        context: Context,
         url: String, port: Int, clientId: String, useTls: Boolean, 
         user: String?, pass: String?
     ): CompletableFuture<*> {
@@ -174,7 +190,7 @@ class MqttManager {
             .addDisconnectedListener { 
                 val reason = it.cause?.message ?: "Normal Closure"
                 MqttLogger.log("Disconnected (v3): $reason", "ERROR")
-                _connectionStatus.tryEmit(false)
+                _connectionStatus.value = MqttConnectionStatus.DISCONNECTED
             }
             .buildAsync()
 
@@ -194,18 +210,35 @@ class MqttManager {
 
         return connectBuilder.send().thenApply {
             MqttLogger.log("Connected to v3 broker: $url", "INFO")
-            _connectionStatus.tryEmit(true)
+            _connectionStatus.value = MqttConnectionStatus.CONNECTED
+            
+            // Re-subscribe to pending topics
+            val subs = synchronized(pendingSubscriptions) { pendingSubscriptions.toList() }
+            subs.forEach { subscribe(context, it) }
+
             it
         }
     }
 
-    fun subscribe(topic: String): CompletableFuture<Void> {
+    fun subscribe(context: Context, topic: String): CompletableFuture<Void> {
+        synchronized(pendingSubscriptions) {
+            if (!pendingSubscriptions.contains(topic)) {
+                pendingSubscriptions.add(topic)
+            }
+        }
+
+        val client = if (currentVersion == 5) client5 else client3
+        if (client == null || !client.state.isConnected) {
+            MqttLogger.log("Subscribe queued: $topic (waiting for connection)", "TRACE")
+            return CompletableFuture.completedFuture(null)
+        }
+
         return when (currentVersion) {
             5 -> client5?.subscribeWith()
                 ?.topicFilter(topic)
                 ?.callback { publish ->
                     scope.launch {
-                        VigSyncApplication.getInstance().syncManager.onRawMessageReceived(
+                        SyncManager.getInstance(context).onRawMessageReceived(
                             publish.topic.toString(), publish.payloadAsBytes
                         )
                     }
@@ -215,7 +248,7 @@ class MqttManager {
                 ?.topicFilter(topic)
                 ?.callback { publish ->
                     scope.launch {
-                        VigSyncApplication.getInstance().syncManager.onRawMessageReceived(
+                        SyncManager.getInstance(context).onRawMessageReceived(
                             publish.topic.toString(), publish.payloadAsBytes
                         )
                     }
@@ -249,6 +282,9 @@ class MqttManager {
     }
 
     private fun disconnectInternal(): CompletableFuture<Void> {
+        synchronized(pendingSubscriptions) {
+            pendingSubscriptions.clear()
+        }
         val f5 = client5?.disconnect() ?: CompletableFuture.completedFuture(null)
         val f3 = client3?.disconnect() ?: CompletableFuture.completedFuture(null)
         client5 = null

@@ -77,6 +77,12 @@ class SyncManager private constructor(context: Context) {
             loadPairedDevices()
             startHeartbeat()
             startEventDrivenWorker()
+            
+            // Auto-start MQTT re-enabled after hardening MqttManager status flow
+            if (appPreferences.brokerUrl.first().isNotEmpty()) {
+                MqttLogger.logApp("SyncManager: Auto-starting MQTT connection", "INFO")
+                start()
+            }
         }
     }
 
@@ -169,7 +175,7 @@ class SyncManager private constructor(context: Context) {
                 database.dao().updateDeviceStatus(entity)
                 
                 val prefix = appPreferences.topicPrefix.first() ?: return@launch
-                mqttManager.subscribe("$prefix/status/${device.id}")
+                mqttManager.subscribe(appContext, "$prefix/status/${device.id}")
                 MqttLogger.logApp("SyncManager: Paired with ${device.name}, awaiting heartbeat", "TRACE")
             }
         }
@@ -204,14 +210,15 @@ class SyncManager private constructor(context: Context) {
             val tls = appPreferences.useTls.first()
             
             mqttManager.connect(
+                context = appContext,
                 brokerUrl = url, 
                 port = port,
                 useTls = tls,
                 username = username,
                 password = password
             )
-            mqttManager.subscribe("$prefix/events/+")
-            mqttManager.subscribe("$prefix/status/+")
+            mqttManager.subscribe(appContext, "$prefix/events/+")
+            mqttManager.subscribe(appContext, "$prefix/status/+")
         }
     }
 
