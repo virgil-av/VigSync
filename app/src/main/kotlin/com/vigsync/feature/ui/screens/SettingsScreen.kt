@@ -9,8 +9,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -282,6 +284,7 @@ fun SyncAlertsTab(viewModel: SettingsViewModel) {
     val calls by viewModel.notifCalls.collectAsState()
     val sms by viewModel.notifSms.collectAsState()
     val other by viewModel.notifOther.collectAsState()
+    val discoveredApps by viewModel.discoveredApps.collectAsState()
 
     Column(
         modifier = Modifier
@@ -316,6 +319,51 @@ fun SyncAlertsTab(viewModel: SettingsViewModel) {
             granted = other,
             onClick = { viewModel.updateNotifSettings(calls, sms, !other) }
         )
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("Sync Sources (Discovered Apps)", style = MaterialTheme.typography.titleLarge)
+        Text(
+            "Apps that have triggered a notification are listed here. You can selectively disable their synchronization.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.outline
+        )
+        
+        if (discoveredApps.isEmpty()) {
+            Text("No apps discovered yet. They will appear here once they send a notification.", 
+                style = MaterialTheme.typography.bodySmall, 
+                modifier = Modifier.padding(vertical = 16.dp),
+                color = MaterialTheme.colorScheme.primary)
+        }
+
+        discoveredApps.forEach { app ->
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    val bitmap = remember(app.icon) { app.icon?.toBitmap() }
+                    if (bitmap != null) {
+                        androidx.compose.foundation.Image(
+                            bitmap = bitmap.asImageBitmap(),
+                            contentDescription = null,
+                            modifier = Modifier.size(32.dp)
+                        )
+                    } else {
+                        Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(32.dp))
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(app.name, style = MaterialTheme.typography.bodyLarge)
+                        Text(app.packageName, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                    }
+                }
+                Switch(
+                    checked = app.isEnabled,
+                    onCheckedChange = { viewModel.toggleAppSync(app.packageName, it) }
+                )
+            }
+        }
 
         Spacer(modifier = Modifier.height(24.dp))
 

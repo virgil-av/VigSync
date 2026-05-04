@@ -38,6 +38,10 @@ class AppPreferences(private val context: Context) {
         val NOTIF_SMS = booleanPreferencesKey("notif_sms")
         val NOTIF_OTHER = booleanPreferencesKey("notif_other")
 
+        // App-specific filtering
+        val OBSERVED_APP_PACKAGES = stringSetPreferencesKey("observed_app_packages")
+        val DISABLED_APP_PACKAGES = stringSetPreferencesKey("disabled_app_packages")
+
         // Keys for EncryptedSharedPreferences
         private const val KEY_SHARED_KEY = "shared_key"
         private const val KEY_BROKER_PASSWORD = "broker_password"
@@ -106,6 +110,29 @@ class AppPreferences(private val context: Context) {
             it[NOTIF_CALLS] = calls
             it[NOTIF_SMS] = sms
             it[NOTIF_OTHER] = other
+        }
+    }
+
+    val observedAppPackages: Flow<Set<String>> = context.dataStore.data.map { it[OBSERVED_APP_PACKAGES] ?: emptySet() }
+    val disabledAppPackages: Flow<Set<String>> = context.dataStore.data.map { it[DISABLED_APP_PACKAGES] ?: emptySet() }
+
+    suspend fun addObservedPackage(packageName: String) {
+        context.dataStore.edit { prefs ->
+            val current = prefs[OBSERVED_APP_PACKAGES] ?: emptySet()
+            if (packageName !in current) {
+                prefs[OBSERVED_APP_PACKAGES] = current + packageName
+            }
+        }
+    }
+
+    suspend fun toggleAppDisabled(packageName: String, disabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            val current = prefs[DISABLED_APP_PACKAGES] ?: emptySet()
+            if (disabled) {
+                prefs[DISABLED_APP_PACKAGES] = current + packageName
+            } else {
+                prefs[DISABLED_APP_PACKAGES] = current - packageName
+            }
         }
     }
 }

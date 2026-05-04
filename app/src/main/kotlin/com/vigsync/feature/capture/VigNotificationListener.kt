@@ -6,37 +6,62 @@ import android.service.notification.StatusBarNotification
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.vigsync.core.SyncManager
+import com.vigsync.data.prefs.AppPreferences
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
 class VigNotificationListener : NotificationListenerService() {
 
     private val recentNotificationWindows = ConcurrentHashMap<String, Long>()
     private val DEDUPE_WINDOW_MILLIS = 8000L
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private lateinit var appPreferences: AppPreferences
+
+    override fun onCreate() {
+        super.onCreate()
+        appPreferences = AppPreferences(applicationContext)
+    }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         val packageName = sbn.packageName
+        
+        // 1. HARDCODED LOOP PROTECTION
         if (packageName == applicationContext.packageName) return
 
-        val extras = sbn.notification.extras
-        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: "No Title"
-        val text = extractBody(sbn)
+        scope.launch {
+            // 2. DISCOVERY & FILTERING
+            appPreferences.addObservedPackage(packageName)
+            val disabledApps = appPreferences.disabledAppPackages.first()
+            if (packageName in disabledApps) {
+                Log.d("VigSync", "Ignored notification from DISABLED app: $packageName")
+                return@launch
+            }
 
-        // Deduplication Logic: Ignore if it's likely handled by Dialer/SMS observers
-        if (isLikelyRedundant(sbn)) {
-            Log.d("VigSync", "Ignored redundant notification from $packageName")
-            return
+            val extras = sbn.notification.extras
+            val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: "No Title"
+            val text = extractBody(sbn)
+
+            // Deduplication Logic: Ignore if it's likely handled by Dialer/SMS observers
+            if (isLikelyRedundant(sbn)) {
+                Log.d("VigSync", "Ignored redundant notification from $packageName")
+                return@launch
+            }
+
+            val eventKey = "$packageName|$title|$text"
+            val now = System.currentTimeMillis()
+            
+            if (isDuplicate(eventKey, now)) {
+                Log.d("VigSync", "Ignored duplicate notification from $packageName")
+                return@launch
+            }
+
+            Log.d("VigSync", "Notification from $packageName: $title - $text")
+            SyncManager.getInstance(applicationContext).publishEvent("NOTIFICATION", "$packageName: $title - $text")
         }
-
-        val eventKey = "$packageName|$title|$text"
-        val now = System.currentTimeMillis()
-        
-        if (isDuplicate(eventKey, now)) {
-            Log.d("VigSync", "Ignored duplicate notification from $packageName")
-            return
-        }
-
-        Log.d("VigSync", "Notification from $packageName: $title - $text")
-        SyncManager.getInstance(applicationContext).publishEvent("NOTIFICATION", "$packageName: $title - $text")
     }
 
     private fun isLikelyRedundant(sbn: StatusBarNotification): Boolean {
