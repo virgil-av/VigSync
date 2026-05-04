@@ -24,7 +24,7 @@ import androidx.lifecycle.LifecycleEventObserver
 @Composable
 fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("MQTT", "Permissions")
+    val tabs = listOf("MQTT", "Permissions", "Sync Alerts")
 
     Column(modifier = Modifier.fillMaxSize()) {
         TabRow(selectedTabIndex = selectedTab) {
@@ -40,6 +40,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
         when (selectedTab) {
             0 -> MqttSettingsTab(viewModel)
             1 -> PermissionsSettingsTab()
+            2 -> SyncAlertsTab(viewModel)
         }
     }
 }
@@ -272,6 +273,57 @@ fun PermissionsSettingsTab() {
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun SyncAlertsTab(viewModel: SettingsViewModel) {
+    val calls by viewModel.notifCalls.collectAsState()
+    val sms by viewModel.notifSms.collectAsState()
+    val other by viewModel.notifOther.collectAsState()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Text("Local Notifications", style = MaterialTheme.typography.titleLarge)
+        Text(
+            "Receive alerts on this device when events are synced from your paired devices.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.outline
+        )
+
+        HorizontalDivider()
+
+        PermissionItem(
+            label = "Call Notifications",
+            granted = calls,
+            onClick = { viewModel.updateNotifSettings(!calls, sms, other) }
+        )
+
+        PermissionItem(
+            label = "SMS Notifications",
+            granted = sms,
+            onClick = { viewModel.updateNotifSettings(calls, !sms, other) }
+        )
+
+        PermissionItem(
+            label = "App Notifications",
+            granted = other,
+            onClick = { viewModel.updateNotifSettings(calls, sms, !other) }
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Button(
+            onClick = { viewModel.sendTestNotification() },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Send Test Notification")
         }
     }
 }

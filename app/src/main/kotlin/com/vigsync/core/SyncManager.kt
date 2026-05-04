@@ -1,10 +1,16 @@
 package com.vigsync.core
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.BatteryManager
+import android.os.Build
 import android.util.Log
+import androidx.core.app.NotificationCompat
+import com.vigsync.MainActivity
 import com.vigsync.core.crypto.EncryptionManager
 import com.vigsync.core.mqtt.MqttManager
 import com.vigsync.core.mqtt.MqttLogger
@@ -31,6 +37,9 @@ class SyncManager private constructor(context: Context) {
     // --- Unified Event Buffer ---
     private val eventBuffer = ConcurrentHashMap<String, BufferedEvent>()
     private val BUFFER_WINDOW = 3500L // 3.5 seconds
+    
+    private val SYNC_CHANNEL_ID = "SyncedEventsChannel"
+    private val SYNC_NOTIF_ID = 1001
 
     private data class BufferedEvent(
         val type: String,
@@ -63,6 +72,7 @@ class SyncManager private constructor(context: Context) {
 
     init {
         MqttLogger.logApp("SyncManager: Strict Instance Created (hash: ${this.hashCode()})", "TRACE")
+        createSyncNotificationChannel()
         scope.launch {
             loadPairedDevices()
             startHeartbeat()
@@ -230,6 +240,53 @@ class SyncManager private constructor(context: Context) {
         }
     }
 
+    private fun createSyncNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val name = "Synced Events"
+            val descriptionText = "Notifications for events synced from other devices"
+            val importance = NotificationManager.IMPORTANCE_DEFAULT
+            val channel = NotificationChannel(SYNC_CHANNEL_ID, name, importance).apply {
+                description = descriptionText
+            }
+            val notificationManager: NotificationManager =
+                appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.createNotificationChannel(channel)
+        }
+    }
+
+    private suspend fun showSyncNotification(type: String, sourceDevice: String, data: String) {
+        val isEnabled = when (type) {
+            "CALL" -> appPreferences.notifCalls.first()
+            "SMS" -> appPreferences.notifSms.first()
+            else -> appPreferences.notifOther.first()
+        }
+
+        if (!isEnabled) return
+
+        val intent = Intent(appContext, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        val pendingIntent: PendingIntent = PendingIntent.getActivity(appContext, 0, intent, PendingIntent.FLAG_IMMUTABLE)
+
+        val builder = NotificationCompat.Builder(appContext, SYNC_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setContentTitle("$type from $sourceDevice")
+            .setContentText(data)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+
+        val notificationManager = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        // Use a unique ID based on hash to show multiple notifications if they come fast
+        notificationManager.notify("$type$data".hashCode(), builder.build())
+    }
+
+    fun sendTestNotification() {
+        scope.launch {
+            showSyncNotification("TEST", "Local Device", "This is a test synchronization alert.")
+        }
+    }
+
     private suspend fun processIncomingEvent(msg: RawMessage) {
         val encryptedStr = msg.payload
         val key = appPreferences.sharedKey.first() ?: return
@@ -263,6 +320,7 @@ class SyncManager private constructor(context: Context) {
         )
         database.dao().insertEvent(eventEntity)
         MqttLogger.logApp("STAGE 4: Synced $type stored", "SUCCESS")
+        showSyncNotification(type, deviceName, data)
     }
 
     private fun logRemoteFailure(type: String, message: String) {

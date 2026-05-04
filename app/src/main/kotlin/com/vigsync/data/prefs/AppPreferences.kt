@@ -33,6 +33,11 @@ class AppPreferences(private val context: Context) {
         val USE_TLS = booleanPreferencesKey("use_tls")
         val MQTT_VERSION = intPreferencesKey("mqtt_version") // 3 for 3.1.1, 5 for v5
         
+        // Sync Notification Controls
+        val NOTIF_CALLS = booleanPreferencesKey("notif_calls")
+        val NOTIF_SMS = booleanPreferencesKey("notif_sms")
+        val NOTIF_OTHER = booleanPreferencesKey("notif_other")
+
         // Keys for EncryptedSharedPreferences
         private const val KEY_SHARED_KEY = "shared_key"
         private const val KEY_BROKER_PASSWORD = "broker_password"
@@ -90,5 +95,17 @@ class AppPreferences(private val context: Context) {
 
     suspend fun saveTopicPrefix(prefix: String) {
         context.dataStore.edit { it[TOPIC_PREFIX] = prefix }
+    }
+
+    val notifCalls: Flow<Boolean> = context.dataStore.data.map { it[NOTIF_CALLS] ?: true }
+    val notifSms: Flow<Boolean> = context.dataStore.data.map { it[NOTIF_SMS] ?: true }
+    val notifOther: Flow<Boolean> = context.dataStore.data.map { it[NOTIF_OTHER] ?: true }
+
+    suspend fun saveNotifSettings(calls: Boolean, sms: Boolean, other: Boolean) {
+        context.dataStore.edit {
+            it[NOTIF_CALLS] = calls
+            it[NOTIF_SMS] = sms
+            it[NOTIF_OTHER] = other
+        }
     }
 }

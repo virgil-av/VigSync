@@ -17,11 +17,25 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val brokerPassword = appPreferences.brokerPassword.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), "")
     val useTls = appPreferences.useTls.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), false)
 
+    val notifCalls = appPreferences.notifCalls.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), true)
+    val notifSms = appPreferences.notifSms.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), true)
+    val notifOther = appPreferences.notifOther.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), true)
+
     fun saveMqttConfig(url: String, port: String, user: String, pass: String, tls: Boolean) {
         viewModelScope.launch {
             appPreferences.saveBrokerConfig(url, port)
             appPreferences.saveMqttAuth(user.ifBlank { null }, pass.ifBlank { null }, tls)
             SyncManager.getInstance(getApplication()).restart()
         }
+    }
+
+    fun updateNotifSettings(calls: Boolean, sms: Boolean, other: Boolean) {
+        viewModelScope.launch {
+            appPreferences.saveNotifSettings(calls, sms, other)
+        }
+    }
+
+    fun sendTestNotification() {
+        SyncManager.getInstance(getApplication()).sendTestNotification()
     }
 }
