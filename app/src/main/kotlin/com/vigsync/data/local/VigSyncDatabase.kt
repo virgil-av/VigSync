@@ -41,6 +41,9 @@ interface VigSyncDao {
     @Query("SELECT * FROM device_status ORDER BY lastSeen DESC")
     fun getAllDeviceStatus(): Flow<List<DeviceStatusEntity>>
 
+    @Query("UPDATE device_status SET customLabel = :label WHERE deviceId = :deviceId")
+    suspend fun updateDeviceLabel(deviceId: String, label: String?)
+
     @Query("DELETE FROM device_status WHERE deviceId = :deviceId")
     suspend fun deleteDeviceStatus(deviceId: String)
 

@@ -37,6 +37,12 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         syncManager.removeDevice(deviceId)
     }
 
+    fun renameDevice(deviceId: String, newLabel: String) {
+        viewModelScope.launch {
+            database.dao().updateDeviceLabel(deviceId, newLabel.ifBlank { null })
+        }
+    }
+
     fun toggleService(permissionsGranted: Boolean = true) {
         val intent = android.content.Intent(getApplication(), MqttService::class.java)
         if (isServiceRunning.value) {

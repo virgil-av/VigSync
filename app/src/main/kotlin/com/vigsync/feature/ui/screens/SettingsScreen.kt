@@ -23,26 +23,33 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
     var selectedTab by remember { mutableIntStateOf(0) }
     val tabs = listOf("MQTT", "Permissions", "Sync Alerts")
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        TabRow(selectedTabIndex = selectedTab) {
-            tabs.forEachIndexed { index, title ->
-                Tab(
-                    selected = selectedTab == index,
-                    onClick = { selectedTab = index },
-                    text = { Text(title) }
-                )
-            }
+    Scaffold(
+        topBar = {
+            TopAppBar(title = { Text("Settings") })
         }
+    ) { innerPadding ->
+        Column(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
+            TabRow(selectedTabIndex = selectedTab) {
+                tabs.forEachIndexed { index, title ->
+                    Tab(
+                        selected = selectedTab == index,
+                        onClick = { selectedTab = index },
+                        text = { Text(title) }
+                    )
+                }
+            }
 
-        when (selectedTab) {
-            0 -> MqttSettingsTab(viewModel)
-            1 -> PermissionsSettingsTab()
-            2 -> SyncAlertsTab(viewModel)
+            when (selectedTab) {
+                0 -> MqttSettingsTab(viewModel)
+                1 -> PermissionsSettingsTab()
+                2 -> SyncAlertsTab(viewModel)
+            }
         }
     }
 }

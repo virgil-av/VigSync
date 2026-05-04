@@ -33,7 +33,8 @@ data class DeviceStatusEntity(
     val name: String,
     val batteryLevel: Int,
     val isOnline: Boolean,
-    val lastSeen: Long
+    val lastSeen: Long,
+    val customLabel: String? = null
 )
 
 @Entity(tableName = "host_protocols")

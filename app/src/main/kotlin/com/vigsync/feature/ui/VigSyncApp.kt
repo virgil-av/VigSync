@@ -31,7 +31,8 @@ sealed class Screen(val route: String, val label: String, val icon: @Composable 
 @Composable
 fun VigSyncApp() {
     val navController = rememberNavController()
-    val items = listOf(Screen.Dashboard, Screen.Events, Screen.Pairing, Screen.Debug, Screen.Settings)
+    // Pairing is now accessed from Dashboard top bar
+    val items = listOf(Screen.Dashboard, Screen.Events, Screen.Debug, Screen.Settings)
 
     Scaffold(
         bottomBar = {
@@ -58,7 +59,11 @@ fun VigSyncApp() {
         }
     ) { innerPadding ->
         NavHost(navController, startDestination = Screen.Dashboard.route, Modifier.padding(innerPadding)) {
-            composable(Screen.Dashboard.route) { DashboardScreen() }
+            composable(Screen.Dashboard.route) { 
+                DashboardScreen(
+                    onNavigateToPairing = { navController.navigate(Screen.Pairing.route) }
+                ) 
+            }
             composable(Screen.Events.route) { EventsScreen() }
             composable(Screen.Pairing.route) { 
                 PairingScreen(
