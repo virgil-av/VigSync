@@ -74,6 +74,9 @@ class SyncManager private constructor(context: Context) {
             createSyncNotificationChannel()
             scope.launch {
                 try {
+                    // Trigger storage migration before anything else
+                    appPreferences.migrateIfNeeded()
+
                     loadPairedDevices()
                     startHeartbeat()
                     startEventDrivenWorker()
@@ -315,30 +318,36 @@ class SyncManager private constructor(context: Context) {
             val hash = msg.calculateHash()
             if (database.dao().countEventHash(hash) > 0) return@launch
 
+            val isLocal = msg.senderId == getLocalDeviceId()
+
             val event = EventEntity(
                 type = msg.type ?: "OTHER",
                 data = msg.data ?: "",
                 timestamp = msg.timestamp,
-                syncStatus = com.vigsync.core.models.SyncStatus.RECEIVED,
-                direction = com.vigsync.core.models.EventDirection.REMOTE,
+                syncStatus = if (isLocal) com.vigsync.core.models.SyncStatus.SENT else com.vigsync.core.models.SyncStatus.RECEIVED,
+                direction = if (isLocal) com.vigsync.core.models.EventDirection.LOCAL else com.vigsync.core.models.EventDirection.REMOTE,
                 sourceDevice = msg.senderName,
                 payloadHash = hash
             )
             database.dao().insertEvent(event)
 
-            // Show Notification based on settings
-            val shouldNotify = when (msg.type) {
-                "CALL" -> appPreferences.notifCalls.first()
-                "SMS" -> appPreferences.notifSms.first()
-                else -> appPreferences.notifOther.first()
-            }
+            // Show Notification ONLY if it's NOT a local event
+            if (!isLocal) {
+                val shouldNotify = when (msg.type) {
+                    "CALL" -> appPreferences.notifCalls.first()
+                    "SMS" -> appPreferences.notifSms.first()
+                    else -> appPreferences.notifOther.first()
+                }
 
-            if (shouldNotify) {
-                showSyncNotification(
-                    title = "${msg.type} from ${msg.senderName}",
-                    message = msg.data ?: "",
-                    deviceName = msg.senderName ?: "Unknown"
-                )
+                if (shouldNotify) {
+                    showSyncNotification(
+                        title = "${msg.type} from ${msg.senderName}",
+                        message = msg.data ?: "",
+                        deviceName = msg.senderName ?: "Unknown"
+                    )
+                }
+            } else {
+                MqttLogger.logApp("SyncManager: Ignored local event loopback notification", "TRACE")
             }
         }
     }

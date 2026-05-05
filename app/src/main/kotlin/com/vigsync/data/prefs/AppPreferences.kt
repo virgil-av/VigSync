@@ -3,34 +3,13 @@ package com.vigsync.data.prefs
 import android.content.Context
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 private val Context.dataStore by preferencesDataStore(name = "settings")
 
 class AppPreferences(private val context: Context) {
-
-    private val encryptedPrefs by lazy {
-        try {
-            val masterKey = MasterKey.Builder(context)
-                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                .build()
-
-            EncryptedSharedPreferences.create(
-                context,
-                "secure_settings",
-                masterKey,
-                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            )
-        } catch (e: Exception) {
-            // Fallback or log error. In a real app, we might want to clear the corrupted prefs
-            // or use a non-encrypted fallback if security allows, but here we just want to avoid crashing.
-            context.getSharedPreferences("secure_settings_fallback", Context.MODE_PRIVATE)
-        }
-    }
 
     companion object {
         val BROKER_URL = stringPreferencesKey("broker_url")
@@ -38,6 +17,8 @@ class AppPreferences(private val context: Context) {
         val TOPIC_PREFIX = stringPreferencesKey("topic_prefix")
         val PAIRED_DEVICES = stringPreferencesKey("paired_devices")
         val BROKER_USERNAME = stringPreferencesKey("broker_username")
+        val BROKER_PASSWORD = stringPreferencesKey("broker_password")
+        val SHARED_KEY = stringPreferencesKey("shared_key")
         val USE_TLS = booleanPreferencesKey("use_tls")
         val MQTT_VERSION = intPreferencesKey("mqtt_version") // 3 for 3.1.1, 5 for v5
         
@@ -52,9 +33,65 @@ class AppPreferences(private val context: Context) {
         val OBSERVED_APP_PACKAGES = stringSetPreferencesKey("observed_app_packages")
         val DISABLED_APP_PACKAGES = stringSetPreferencesKey("disabled_app_packages")
 
-        // Keys for EncryptedSharedPreferences
-        private const val KEY_SHARED_KEY = "shared_key"
-        private const val KEY_BROKER_PASSWORD = "broker_password"
+        // Keys for Migration
+        private const val OLD_SECURE_SETTINGS = "secure_settings"
+        private const val OLD_KEY_SHARED_KEY = "shared_key"
+        private const val OLD_KEY_BROKER_PASSWORD = "broker_password"
+        private const val KEY_MIGRATED = "prefs_migrated_v2"
+    }
+
+    suspend fun migrateIfNeeded() {
+        context.dataStore.edit { prefs ->
+            if (prefs[booleanPreferencesKey(KEY_MIGRATED)] == true) return@edit
+
+            try {
+                // We use reflection to try to load the security library classes
+                // If the library was removed from build.gradle.kts, this will fail gracefully
+                val masterKeyClass = Class.forName("androidx.security.crypto.MasterKey")
+                val builderClass = Class.forName("androidx.security.crypto.MasterKey\$Builder")
+                val schemeClass = Class.forName("androidx.security.crypto.MasterKey\$KeyScheme")
+                val sharedPrefsClass = Class.forName("androidx.security.crypto.EncryptedSharedPreferences")
+                val keySchemeClass = Class.forName("androidx.security.crypto.EncryptedSharedPreferences\$PrefKeyEncryptionScheme")
+                val valueSchemeClass = Class.forName("androidx.security.crypto.EncryptedSharedPreferences\$PrefValueEncryptionScheme")
+
+                val builder = builderClass.getConstructor(Context::class.java).newInstance(context)
+                val aes256gcm = schemeClass.getField("AES256_GCM").get(null)
+                builderClass.getMethod("setKeyScheme", schemeClass).invoke(builder, aes256gcm)
+                val masterKey = builderClass.getMethod("build").invoke(builder)
+
+                val createMethod = sharedPrefsClass.getMethod(
+                    "create",
+                    Context::class.java,
+                    String::class.java,
+                    masterKeyClass,
+                    keySchemeClass,
+                    valueSchemeClass
+                )
+
+                val aes256siv = keySchemeClass.getField("AES256_SIV").get(null)
+                val aes256gcmValue = valueSchemeClass.getField("AES256_GCM").get(null)
+
+                val encryptedPrefs = createMethod.invoke(
+                    null,
+                    context,
+                    OLD_SECURE_SETTINGS,
+                    masterKey,
+                    aes256siv,
+                    aes256gcmValue
+                ) as android.content.SharedPreferences
+
+                val oldPass = encryptedPrefs.getString(OLD_KEY_BROKER_PASSWORD, null)
+                val oldKey = encryptedPrefs.getString(OLD_KEY_SHARED_KEY, null)
+
+                if (oldPass != null) prefs[BROKER_PASSWORD] = oldPass
+                if (oldKey != null) prefs[SHARED_KEY] = oldKey
+                
+                prefs[booleanPreferencesKey(KEY_MIGRATED)] = true
+            } catch (e: Exception) {
+                // Migration failed or library not present
+                prefs[booleanPreferencesKey(KEY_MIGRATED)] = true
+            }
+        }
     }
 
     val mqttVersion: Flow<Int> = context.dataStore.data.map { it[MQTT_VERSION] ?: 5 }
@@ -65,20 +102,16 @@ class AppPreferences(private val context: Context) {
 
     val brokerUsername: Flow<String?> = context.dataStore.data.map { it[BROKER_USERNAME] }
     
-    val brokerPassword: Flow<String?> = context.dataStore.data.map { 
-        encryptedPrefs.getString(KEY_BROKER_PASSWORD, null)
-    }
+    val brokerPassword: Flow<String?> = context.dataStore.data.map { it[BROKER_PASSWORD] }
 
     val useTls: Flow<Boolean> = context.dataStore.data.map { it[USE_TLS] ?: false }
 
     suspend fun saveMqttAuth(username: String?, password: String?, tls: Boolean) {
         context.dataStore.edit { prefs ->
             if (username == null) prefs.remove(BROKER_USERNAME) else prefs[BROKER_USERNAME] = username
+            if (password == null) prefs.remove(BROKER_PASSWORD) else prefs[BROKER_PASSWORD] = password
             prefs[USE_TLS] = tls
         }
-        encryptedPrefs.edit().apply {
-            if (password == null) remove(KEY_BROKER_PASSWORD) else putString(KEY_BROKER_PASSWORD, password)
-        }.apply()
     }
 
     val pairedDevices: Flow<String?> = context.dataStore.data.map { it[PAIRED_DEVICES] }
@@ -90,9 +123,7 @@ class AppPreferences(private val context: Context) {
     val brokerUrl: Flow<String> = context.dataStore.data.map { it[BROKER_URL] ?: "broker.hivemq.com" }
     val brokerPort: Flow<String> = context.dataStore.data.map { it[BROKER_PORT] ?: "1883" }
     
-    val sharedKey: Flow<String?> = context.dataStore.data.map { 
-        encryptedPrefs.getString(KEY_SHARED_KEY, null)
-    }
+    val sharedKey: Flow<String?> = context.dataStore.data.map { it[SHARED_KEY] }
     
     val topicPrefix: Flow<String?> = context.dataStore.data.map { it[TOPIC_PREFIX] }
 
@@ -104,7 +135,7 @@ class AppPreferences(private val context: Context) {
     }
 
     suspend fun saveSharedKey(key: String) {
-        encryptedPrefs.edit().putString(KEY_SHARED_KEY, key).apply()
+        context.dataStore.edit { it[SHARED_KEY] = key }
     }
 
     suspend fun saveTopicPrefix(prefix: String) {

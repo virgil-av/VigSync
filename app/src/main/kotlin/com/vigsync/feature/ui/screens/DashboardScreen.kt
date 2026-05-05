@@ -329,6 +329,7 @@ fun MqttStatusBadgeInline(
     val (color, text, icon) = when (status) {
         com.vigsync.core.mqtt.MqttConnectionStatus.CONNECTED -> Triple(Color(0xFF4CAF50), "Online", Icons.Default.Cloud)
         com.vigsync.core.mqtt.MqttConnectionStatus.CONNECTING -> Triple(Color(0xFFFF9800), "Connecting", Icons.Default.CloudQueue)
+        com.vigsync.core.mqtt.MqttConnectionStatus.RECONNECTING -> Triple(Color(0xFF2196F3), "Reconnecting", Icons.Default.CloudQueue)
         com.vigsync.core.mqtt.MqttConnectionStatus.DISCONNECTED -> Triple(Color(0xFFF44336), "Offline", Icons.Default.CloudOff)
     }
 

@@ -25,7 +25,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 enum class MqttConnectionStatus {
-    CONNECTED, CONNECTING, DISCONNECTED
+    CONNECTED, CONNECTING, DISCONNECTED, RECONNECTING
 }
 
 class MqttManager {
@@ -34,6 +34,17 @@ class MqttManager {
     private var currentVersion: Int = 5
     private val connectionMutex = Mutex()
     private val pendingSubscriptions = mutableListOf<String>()
+
+    private var currentConfig: ConnectionConfig? = null
+
+    data class ConnectionConfig(
+        val url: String,
+        val port: Int,
+        val clientId: String,
+        val useTls: Boolean,
+        val user: String?,
+        val pass: String?
+    )
 
     // Tied to Application lifecycle
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -54,7 +65,14 @@ class MqttManager {
         username: String? = null,
         password: String? = null
     ) {
+        val newConfig = ConnectionConfig(brokerUrl, port, clientId, useTls, username, password)
+        
         connectionMutex.withLock {
+            if (_connectionStatus.value == MqttConnectionStatus.CONNECTED && currentConfig == newConfig) {
+                MqttLogger.log("Already connected to the same broker, skipping.", "INFO")
+                return@withLock
+            }
+
             _connectionStatus.value = MqttConnectionStatus.CONNECTING
             val cleanUrl = brokerUrl
                 .replace("mqtt://", "", ignoreCase = true)
@@ -62,9 +80,10 @@ class MqttManager {
                 .replace("ssl://", "", ignoreCase = true)
                 .trim()
 
-            // Step 0: Kill any existing "Zombie" connections
+            // Step 0: Kill any existing "Zombie" connections but KEEP subscriptions for now
+            // as we might be reconnecting to the same broker or a known one.
             MqttLogger.log("Stopping previous connections before new attempt...", "INFO")
-            disconnectInternal().await()
+            disconnectInternal(clearSubscriptions = false).await()
 
             val dao = SyncManager.getInstance(context).getDao()
             val knownVersion = dao.getProtocolForHost(cleanUrl)
@@ -72,7 +91,10 @@ class MqttManager {
             if (knownVersion != null) {
                 MqttLogger.log("Known host found: $cleanUrl (v$knownVersion)", "INFO")
                 val success = tryConnectOnce(context, cleanUrl, port, clientId, useTls, username, password, knownVersion)
-                if (success) return@withLock
+                if (success) {
+                    currentConfig = newConfig
+                    return@withLock
+                }
                 MqttLogger.log("Known version failed, starting re-detection dance", "WARNING")
             }
 
@@ -84,6 +106,7 @@ class MqttManager {
                 if (tryConnectOnce(context, cleanUrl, port, clientId, useTls, username, password, 5)) {
                     MqttLogger.log("v5 Success! Saving to Registry", "SUCCESS")
                     dao.saveHostProtocol(HostProtocolEntity(cleanUrl, 5))
+                    currentConfig = newConfig
                     return@withLock
                 }
                 if (i < 3) delay(2000)
@@ -95,6 +118,7 @@ class MqttManager {
                 if (tryConnectOnce(context, cleanUrl, port, clientId, useTls, username, password, 3)) {
                     MqttLogger.log("v3 Success! Saving to Registry", "SUCCESS")
                     dao.saveHostProtocol(HostProtocolEntity(cleanUrl, 3))
+                    currentConfig = newConfig
                     return@withLock
                 }
                 if (i < 3) delay(2000)
@@ -102,6 +126,7 @@ class MqttManager {
 
             MqttLogger.log("Dance Failed: Connectivity issue for $cleanUrl", "ERROR")
             _connectionStatus.value = MqttConnectionStatus.DISCONNECTED
+            currentConfig = null
         }
     }
 
@@ -155,7 +180,7 @@ class MqttManager {
             .addDisconnectedListener { 
                 val reason = it.cause?.message ?: it.source.toString()
                 MqttLogger.log("Disconnected (v5): $reason", "ERROR")
-                _connectionStatus.value = MqttConnectionStatus.DISCONNECTED
+                _connectionStatus.value = if (it.source.toString().contains("RECONNECT")) MqttConnectionStatus.RECONNECTING else MqttConnectionStatus.DISCONNECTED
             }
             .buildAsync()
 
@@ -215,7 +240,7 @@ class MqttManager {
             .addDisconnectedListener { 
                 val reason = it.cause?.message ?: "Normal Closure"
                 MqttLogger.log("Disconnected (v3): $reason", "ERROR")
-                _connectionStatus.value = MqttConnectionStatus.DISCONNECTED
+                _connectionStatus.value = if (reason.contains("RECONNECT", ignoreCase = true)) MqttConnectionStatus.RECONNECTING else MqttConnectionStatus.DISCONNECTED
             }
             .buildAsync()
 
@@ -329,16 +354,19 @@ class MqttManager {
 
     fun disconnect(): CompletableFuture<Void> {
         return try {
-            disconnectInternal()
+            disconnectInternal(clearSubscriptions = true)
         } catch (e: Exception) {
             MqttLogger.log("Disconnect error: ${e.message}", "ERROR")
             CompletableFuture.completedFuture(null)
         }
     }
 
-    private fun disconnectInternal(): CompletableFuture<Void> {
-        synchronized(pendingSubscriptions) {
-            pendingSubscriptions.clear()
+    private fun disconnectInternal(clearSubscriptions: Boolean = false): CompletableFuture<Void> {
+        if (clearSubscriptions) {
+            synchronized(pendingSubscriptions) {
+                pendingSubscriptions.clear()
+            }
+            currentConfig = null
         }
         
         val f5 = client5?.disconnect() ?: CompletableFuture.completedFuture(null)
