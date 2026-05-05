@@ -40,6 +40,7 @@ fun DashboardScreen(
     val devices: List<com.vigsync.data.local.DeviceStatusEntity> by viewModel.pairedDevices.collectAsState(initial = emptyList())
     val isSyncActive: Boolean by viewModel.isSyncActive.collectAsState()
     val connectionStatus: com.vigsync.core.mqtt.MqttConnectionStatus by viewModel.connectionStatus.collectAsState(initial = com.vigsync.core.mqtt.MqttConnectionStatus.DISCONNECTED)
+    val eventCounts by viewModel.deviceEventCounts.collectAsState()
     
     val shareCalls: Boolean by viewModel.shareCalls.collectAsState(initial = false)
     val shareSms: Boolean by viewModel.shareSms.collectAsState(initial = false)
@@ -257,7 +258,7 @@ fun DashboardScreen(
                 contentPadding = PaddingValues(bottom = 16.dp)
             ) {
                 items(devices) { device ->
-                    val eventCount by viewModel.getEventCount(device.name).collectAsState(initial = 0)
+                    val eventCount = eventCounts[device.name] ?: 0
                     DeviceGridCard(
                         device = device,
                         eventCount = eventCount,

@@ -44,7 +44,7 @@ interface VigSyncDao {
     @Query("SELECT * FROM device_status WHERE deviceId = :deviceId")
     suspend fun getDeviceStatus(deviceId: String): DeviceStatusEntity?
 
-    @Query("SELECT * FROM device_status ORDER BY lastSeen DESC")
+    @Query("SELECT * FROM device_status ORDER BY pairingTimestamp ASC")
     fun getAllDeviceStatus(): Flow<List<DeviceStatusEntity>>
 
     @Query("UPDATE device_status SET customLabel = :label WHERE deviceId = :deviceId")

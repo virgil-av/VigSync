@@ -273,7 +273,8 @@ class SyncManager private constructor(context: Context) {
                     name = msg.senderName ?: "Unknown Device",
                     batteryLevel = msg.batteryLevel ?: 0,
                     isOnline = true,
-                    lastSeen = msg.timestamp
+                    lastSeen = msg.timestamp,
+                    pairingTimestamp = System.currentTimeMillis()
                 )
                 dao.updateDeviceStatus(entity)
             }

@@ -87,8 +87,16 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun getEventCount(deviceName: String): Flow<Int> = database.dao().getEventCountForDevice(deviceName)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+    val deviceEventCounts: StateFlow<Map<String, Int>> = database.dao().getAllEvents()
+        .map { events ->
+            events.groupBy { it.sourceDevice ?: "Unknown" }
+                .mapValues { it.value.size }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyMap()
+        )
 
     fun toggleSync(permissionsGranted: Boolean = true) {
         val intent = android.content.Intent(getApplication(), MqttService::class.java)
