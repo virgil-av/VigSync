@@ -78,6 +78,9 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun getEventCount(deviceName: String) = database.dao().getEventCountForDevice(deviceName)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
     fun toggleSync(permissionsGranted: Boolean = true) {
         val intent = android.content.Intent(getApplication(), MqttService::class.java)
         viewModelScope.launch {

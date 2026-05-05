@@ -13,49 +13,57 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vigsync.feature.ui.components.QrScanner
+import java.text.SimpleDateFormat
+import java.util.*
+
+enum class PairingTab { MY_QR, SCAN_QR }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(
     viewModel: DashboardViewModel = viewModel(),
-    pairingViewModel: PairingViewModel = viewModel(),
-    onNavigateToPairing: (Boolean) -> Unit = {} // Keep for compatibility if needed elsewhere
+    pairingViewModel: PairingViewModel = viewModel()
 ) {
     val devices by viewModel.pairedDevices.collectAsState()
     val isSyncActive by viewModel.isSyncActive.collectAsState()
     val connectionStatus by viewModel.connectionStatus.collectAsState(initial = com.vigsync.core.mqtt.MqttConnectionStatus.DISCONNECTED)
     
-    val shareCalls by viewModel.shareCalls.collectAsState(initial = true)
-    val shareSms by viewModel.shareSms.collectAsState(initial = true)
-    val shareNotifications by viewModel.shareNotifications.collectAsState(initial = true)
+    val shareCalls by viewModel.shareCalls.collectAsState(initial = false)
+    val shareSms by viewModel.shareSms.collectAsState(initial = false)
+    val shareNotifications by viewModel.shareNotifications.collectAsState(initial = false)
 
     var showSharingDialog by remember { mutableStateOf(false) }
-    var showPairingDialog by remember { mutableStateOf(false) }
+    var localShareCalls by remember { mutableStateOf(false) }
+    var localShareSms by remember { mutableStateOf(false) }
+    var localShareNotifications by remember { mutableStateOf(false) }
+
+    var showPairingDialog by remember { mutableStateOf<PairingTab?>(null) }
     var showDeleteConfirmation by remember { mutableStateOf<com.vigsync.data.local.DeviceStatusEntity?>(null) }
     var renamingDevice by remember { mutableStateOf<com.vigsync.data.local.DeviceStatusEntity?>(null) }
     
-    var deniedPermissions by remember { mutableStateOf<List<String>>(emptyList()) }
+    val context = androidx.compose.ui.platform.LocalContext.current
 
-    val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+    val callPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions(),
         onResult = { permissions ->
-            deniedPermissions = permissions.filter { !it.value }.keys.toList()
-            if (deniedPermissions.isEmpty()) {
-                viewModel.toggleSync(permissionsGranted = true)
-            }
+            localShareCalls = permissions.values.all { it }
+        }
+    )
+
+    val smsPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions(),
+        onResult = { permissions ->
+            localShareSms = permissions.values.all { it }
         }
     )
 
@@ -63,23 +71,53 @@ fun DashboardScreen(
     if (showSharingDialog) {
         SharingOptionsDialog(
             isSharing = isSyncActive,
-            calls = shareCalls,
-            sms = shareSms,
-            notifications = shareNotifications,
-            onUpdatePrefs = { c, s, n -> viewModel.updateSharingPreferences(c, s, n) },
-            onToggleSharing = {
-                if (!isSyncActive) {
-                    val permissions = mutableListOf(
-                        android.Manifest.permission.READ_SMS,
-                        android.Manifest.permission.RECEIVE_SMS,
+            calls = localShareCalls,
+            sms = localShareSms,
+            notifications = localShareNotifications,
+            onCallsToggle = { checked ->
+                if (checked) {
+                    callPermissionLauncher.launch(arrayOf(
                         android.Manifest.permission.READ_CALL_LOG,
                         android.Manifest.permission.READ_PHONE_STATE,
                         android.Manifest.permission.READ_CONTACTS
-                    )
-                    if (android.os.Build.VERSION.SDK_INT >= 33) {
-                        permissions.add(android.Manifest.permission.POST_NOTIFICATIONS)
+                    ))
+                } else {
+                    localShareCalls = false
+                }
+            },
+            onSmsToggle = { checked ->
+                if (checked) {
+                    smsPermissionLauncher.launch(arrayOf(
+                        android.Manifest.permission.READ_SMS,
+                        android.Manifest.permission.RECEIVE_SMS
+                    ))
+                } else {
+                    localShareSms = false
+                }
+            },
+            onNotificationsToggle = { checked ->
+                if (checked) {
+                    // Check if notification service is already enabled
+                    val pkgName = context.packageName
+                    val flat = android.provider.Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners")
+                    val enabled = flat?.contains(pkgName) == true
+                    
+                    if (enabled) {
+                        localShareNotifications = true
+                    } else {
+                        // Redirect to settings
+                        context.startActivity(android.content.Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS").apply {
+                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                        })
                     }
-                    permissionLauncher.launch(permissions.toTypedArray())
+                } else {
+                    localShareNotifications = false
+                }
+            },
+            onToggleSharing = {
+                if (!isSyncActive) {
+                    viewModel.updateSharingPreferences(localShareCalls, localShareSms, localShareNotifications)
+                    viewModel.toggleSync()
                 } else {
                     viewModel.toggleSync()
                 }
@@ -89,11 +127,22 @@ fun DashboardScreen(
         )
     }
 
+    // Effect to check notification permission when returning to app
+    androidx.compose.runtime.DisposableEffect(showSharingDialog) {
+        if (showSharingDialog) {
+            val pkgName = context.packageName
+            val flat = android.provider.Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners")
+            localShareNotifications = flat?.contains(pkgName) == true
+        }
+        onDispose {}
+    }
+
     // Pairing Dialog
-    if (showPairingDialog) {
+    if (showPairingDialog != null) {
         PairingDialog(
             viewModel = pairingViewModel,
-            onDismiss = { showPairingDialog = false }
+            initialTab = showPairingDialog!!,
+            onDismiss = { showPairingDialog = null }
         )
     }
 
@@ -147,12 +196,25 @@ fun DashboardScreen(
                 .padding(innerPadding)
                 .padding(horizontal = 16.dp)
         ) {
-            // "My Device" Card - Full Width, Professional Look
+            // "My Device" Card
             MyDeviceCard(
                 model = android.os.Build.MODEL,
                 connectionStatus = connectionStatus,
                 isSharing = isSyncActive,
-                onShareClick = { showSharingDialog = true }
+                lastSeen = System.currentTimeMillis(),
+                onShareClick = { 
+                    if (isSyncActive) {
+                        viewModel.toggleSync()
+                    } else {
+                        localShareCalls = false
+                        localShareSms = false
+                        // Check notification listener status accurately
+                        val flat = android.provider.Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners")
+                        localShareNotifications = flat?.contains(context.packageName) == true
+                        showSharingDialog = true 
+                    }
+                },
+                onMyQrClick = { showPairingDialog = PairingTab.MY_QR }
             )
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -173,15 +235,17 @@ fun DashboardScreen(
                 contentPadding = PaddingValues(bottom = 16.dp)
             ) {
                 items(devices) { device ->
+                    val eventCount by viewModel.getEventCount(device.name).collectAsState(initial = 0)
                     DeviceGridCard(
                         device = device,
+                        eventCount = eventCount,
                         onRename = { renamingDevice = device },
                         onDelete = { showDeleteConfirmation = device }
                     )
                 }
                 
                 item {
-                    AddDeviceCard(onClick = { showPairingDialog = true })
+                    AddDeviceCard(onClick = { showPairingDialog = PairingTab.SCAN_QR })
                 }
             }
         }
@@ -193,64 +257,60 @@ fun MyDeviceCard(
     model: String,
     connectionStatus: com.vigsync.core.mqtt.MqttConnectionStatus,
     isSharing: Boolean,
-    onShareClick: () -> Unit
+    lastSeen: Long,
+    onShareClick: () -> Unit,
+    onMyQrClick: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = Color(0xFFF8F9FA), // Soft white
-            contentColor = Color(0xFF212529)   // High contrast text
+            containerColor = Color(0xFFF8F9FA),
+            contentColor = Color(0xFF212529)
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Column(modifier = Modifier.padding(20.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "My Device",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.ExtraBold
-                        )
+        Row(
+            modifier = Modifier.padding(20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "My Device",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.ExtraBold
+                )
+                Text(
+                    text = model,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.Gray
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    MqttStatusBadgeInline(status = connectionStatus)
+                    if (isSharing) {
                         Spacer(modifier = Modifier.width(8.dp))
-                        MqttStatusBadge(status = connectionStatus)
+                        HeartbeatText(lastSeen = lastSeen)
                     }
-                    Text(
-                        text = model,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color.Gray
-                    )
-                }
-                
-                // Share Button
-                IconButton(
-                    onClick = onShareClick,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .background(
-                            if (isSharing) Color(0xFF4CAF50).copy(alpha = 0.1f) else Color.LightGray.copy(alpha = 0.2f),
-                            MaterialTheme.shapes.medium
-                        )
-                ) {
-                    Icon(
-                        imageVector = if (isSharing) Icons.Default.CloudDone else Icons.Default.CloudOff,
-                        contentDescription = "Share",
-                        tint = if (isSharing) Color(0xFF4CAF50) else Color.Gray
-                    )
                 }
             }
             
-            if (isSharing) {
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = "Currently sharing with synced devices",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFF4CAF50),
-                    fontWeight = FontWeight.Medium
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // My QR Button
+                DeviceActionButton(
+                    icon = Icons.Default.QrCode,
+                    label = "My QR",
+                    onClick = onMyQrClick
+                )
+                
+                Spacer(modifier = Modifier.width(16.dp))
+                
+                // Share Button (Dynamic Icon and Label)
+                DeviceActionButton(
+                    icon = Icons.Default.Sync,
+                    label = if (isSharing) "Stop Sync" else "Start sync",
+                    isActive = isSharing,
+                    onClick = onShareClick
                 )
             }
         }
@@ -258,32 +318,35 @@ fun MyDeviceCard(
 }
 
 @Composable
-fun MqttStatusBadge(status: com.vigsync.core.mqtt.MqttConnectionStatus) {
-    val (color, text) = when (status) {
-        com.vigsync.core.mqtt.MqttConnectionStatus.CONNECTED -> Color(0xFF4CAF50) to "Online"
-        com.vigsync.core.mqtt.MqttConnectionStatus.CONNECTING -> Color(0xFFFF9800) to "Connecting"
-        com.vigsync.core.mqtt.MqttConnectionStatus.DISCONNECTED -> Color(0xFFF44336) to "Offline"
+fun MqttStatusBadgeInline(status: com.vigsync.core.mqtt.MqttConnectionStatus) {
+    val (color, text, icon) = when (status) {
+        com.vigsync.core.mqtt.MqttConnectionStatus.CONNECTED -> Triple(Color(0xFF4CAF50), "Online", Icons.Default.Cloud)
+        com.vigsync.core.mqtt.MqttConnectionStatus.CONNECTING -> Triple(Color(0xFFFF9800), "Connecting", Icons.Default.CloudQueue)
+        com.vigsync.core.mqtt.MqttConnectionStatus.DISCONNECTED -> Triple(Color(0xFFF44336), "Offline", Icons.Default.CloudOff)
     }
 
     Surface(
-        color = color.copy(alpha = 0.15f),
+        color = color.copy(alpha = 0.1f),
         shape = MaterialTheme.shapes.small,
+        modifier = Modifier.height(IntrinsicSize.Min)
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
-                modifier = Modifier
-                    .size(6.dp)
-                    .background(color, MaterialTheme.shapes.extraSmall)
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = color,
+                modifier = Modifier.size(14.dp)
             )
             Spacer(modifier = Modifier.width(4.dp))
             Text(
                 text = text,
                 style = MaterialTheme.typography.labelSmall,
                 color = color,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                fontSize = 10.sp
             )
         }
     }
@@ -295,33 +358,67 @@ fun SharingOptionsDialog(
     calls: Boolean,
     sms: Boolean,
     notifications: Boolean,
-    onUpdatePrefs: (Boolean, Boolean, Boolean) -> Unit,
+    onCallsToggle: (Boolean) -> Unit,
+    onSmsToggle: (Boolean) -> Unit,
+    onNotificationsToggle: (Boolean) -> Unit,
     onToggleSharing: () -> Unit,
     onDismiss: () -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (isSharing) "Stop Sharing" else "Share this device") },
+        title = { Text("Sync Configuration") },
         text = {
             Column {
                 Text(
-                    "Choose what you would like to share with your other devices.",
-                    style = MaterialTheme.typography.bodyMedium
+                    "Choose what you would like to share with your other devices. VigSync uses your private MQTT connection to transmit these events securely.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(24.dp))
                 
-                SharingToggle("Calls", calls) { onUpdatePrefs(it, sms, notifications) }
-                SharingToggle("Messages", sms) { onUpdatePrefs(calls, it, notifications) }
-                SharingToggle("Notifications", notifications) { onUpdatePrefs(calls, sms, it) }
+                SharingOptionItem(
+                    title = "Calls",
+                    description = "Sync incoming and outgoing call details so you can stay updated across all your devices.",
+                    permissionInfo = "Requires Call Log & Phone state access.",
+                    checked = calls,
+                    onCheckedChange = onCallsToggle
+                )
+                
+                Spacer(modifier = Modifier.height(20.dp))
+                
+                SharingOptionItem(
+                    title = "SMS",
+                    description = "Transmit text messages to your paired devices so you never miss an important message.",
+                    permissionInfo = "Requires SMS access.",
+                    checked = sms,
+                    onCheckedChange = onSmsToggle
+                )
+                
+                Spacer(modifier = Modifier.height(20.dp))
+                
+                SharingOptionItem(
+                    title = "App Alerts",
+                    description = "Sync notifications from other apps (like WhatsApp) across your devices.",
+                    permissionInfo = "Requires Special Notification Access.",
+                    checked = notifications,
+                    onCheckedChange = onNotificationsToggle
+                )
             }
         },
         confirmButton = {
-            Button(onClick = onToggleSharing) {
-                Text(if (isSharing) "Stop Sharing" else "Start Sharing")
+            Button(
+                onClick = onToggleSharing,
+                enabled = isSharing || calls || sms || notifications,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isSharing) Color(0xFFFF9800) else Color(0xFF4CAF50)
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (isSharing) "Stop Sync" else "Start Sync")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
+            TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
                 Text("Cancel")
             }
         }
@@ -329,24 +426,107 @@ fun SharingOptionsDialog(
 }
 
 @Composable
-fun SharingToggle(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+fun SharingOptionItem(
+    title: String,
+    description: String,
+    permissionInfo: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Top
     ) {
-        Text(label)
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = permissionInfo,
+                style = MaterialTheme.typography.labelSmall,
+                color = Color(0xFF4CAF50),
+                fontWeight = FontWeight.Medium
+            )
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = Color(0xFF4CAF50)
+            )
+        )
     }
+}
+
+@Composable
+fun DeviceActionButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    isActive: Boolean = false,
+    onClick: () -> Unit
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        IconButton(
+            onClick = onClick,
+            modifier = Modifier
+                .size(44.dp)
+                .background(
+                    if (isActive) Color(0xFF4CAF50).copy(alpha = 0.1f) else Color.LightGray.copy(alpha = 0.2f),
+                    MaterialTheme.shapes.medium
+                )
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = if (isActive) Color(0xFF4CAF50) else Color.Gray,
+                modifier = Modifier.size(24.dp)
+            )
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            fontSize = 9.sp,
+            color = Color.Gray
+        )
+    }
+}
+
+@Composable
+fun HeartbeatText(lastSeen: Long) {
+    val diff = (System.currentTimeMillis() - lastSeen) / 1000
+    val color = when {
+        diff < 90 -> Color(0xFF4CAF50)
+        diff < 180 -> Color(0xFFFF9800)
+        else -> Color(0xFFF44336)
+    }
+    val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+    Text(
+        text = sdf.format(Date(lastSeen)),
+        style = MaterialTheme.typography.labelSmall,
+        color = color,
+        fontSize = 10.sp
+    )
 }
 
 @Composable
 fun PairingDialog(
     viewModel: PairingViewModel,
+    initialTab: PairingTab,
     onDismiss: () -> Unit
 ) {
     val qrBitmap by viewModel.qrCode.collectAsState()
-    var isScanning by remember { mutableStateOf(false) }
+    var currentTab by remember { mutableStateOf(initialTab) }
     
     Dialog(onDismissRequest = onDismiss) {
         Card(
@@ -366,7 +546,7 @@ fun PairingDialog(
                     shape = MaterialTheme.shapes.medium
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        if (isScanning) {
+                        if (currentTab == PairingTab.SCAN_QR) {
                             QrScanner { result ->
                                 viewModel.onScanResult(result)
                                 onDismiss()
@@ -384,16 +564,16 @@ fun PairingDialog(
                 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
-                        onClick = { isScanning = false },
+                        onClick = { currentTab = PairingTab.MY_QR },
                         modifier = Modifier.weight(1f),
-                        colors = if (!isScanning) ButtonDefaults.buttonColors() else ButtonDefaults.outlinedButtonColors()
+                        colors = if (currentTab == PairingTab.MY_QR) ButtonDefaults.buttonColors() else ButtonDefaults.outlinedButtonColors()
                     ) {
                         Text("My QR", maxLines = 1)
                     }
                     Button(
-                        onClick = { isScanning = true },
+                        onClick = { currentTab = PairingTab.SCAN_QR },
                         modifier = Modifier.weight(1f),
-                        colors = if (isScanning) ButtonDefaults.buttonColors() else ButtonDefaults.outlinedButtonColors()
+                        colors = if (currentTab == PairingTab.SCAN_QR) ButtonDefaults.buttonColors() else ButtonDefaults.outlinedButtonColors()
                     ) {
                         Text("Scan QR", maxLines = 1)
                     }
@@ -409,12 +589,12 @@ fun PairingDialog(
 
 @Composable
 fun AddDeviceCard(onClick: () -> Unit) {
-    Card(
+    OutlinedCard(
         modifier = Modifier
             .fillMaxWidth()
-            .height(160.dp), // Consistent height with device cards
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            .height(170.dp),
+        colors = CardDefaults.outlinedCardColors(
+            containerColor = Color(0xFFF8F9FA).copy(alpha = 0.5f)
         ),
         onClick = onClick
     ) {
@@ -442,66 +622,73 @@ fun AddDeviceCard(onClick: () -> Unit) {
 @Composable
 fun DeviceGridCard(
     device: com.vigsync.data.local.DeviceStatusEntity,
+    eventCount: Int,
     onRename: () -> Unit,
     onDelete: () -> Unit
 ) {
     val isNew = !device.isOnline && (System.currentTimeMillis() - device.lastSeen < 60000)
+    var showMenu by remember { mutableStateOf(false) }
 
-    Card(
-        modifier = Modifier.fillMaxWidth().height(160.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (device.isOnline) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f) else MaterialTheme.colorScheme.surfaceVariant
+    OutlinedCard(
+        modifier = Modifier.fillMaxWidth().height(170.dp),
+        colors = CardDefaults.outlinedCardColors(
+            containerColor = if (device.isOnline) Color(0xFFE8F5E9) else Color(0xFFF8F9FA)
         )
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Top
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = if (isNew) Icons.Default.Sync else Icons.Default.Smartphone,
-                    contentDescription = null,
-                    modifier = Modifier.size(28.dp).rotate(if (isNew) animateRotation() else 0f),
-                    tint = if (device.isOnline) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                Text(
+                    text = device.customLabel ?: device.name,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
                 )
                 
-                IconButton(onClick = onDelete, modifier = Modifier.size(24.dp)) {
-                    Icon(Icons.Default.Close, contentDescription = "Remove", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.error.copy(alpha = 0.6f))
+                Box {
+                    IconButton(onClick = { showMenu = true }, modifier = Modifier.size(24.dp)) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "Menu", modifier = Modifier.size(18.dp))
+                    }
+                    DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Rename device") },
+                            onClick = { showMenu = false; onRename() },
+                            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Remove device", color = MaterialTheme.colorScheme.error) },
+                            onClick = { showMenu = false; onDelete() },
+                            leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.error) }
+                        )
+                    }
                 }
             }
             
-            Spacer(modifier = Modifier.height(8.dp))
-            
-            Text(
-                text = device.customLabel ?: device.name,
-                style = MaterialTheme.typography.titleSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                fontWeight = FontWeight.Bold
-            )
+            Spacer(modifier = Modifier.height(4.dp))
             
             if (isNew) {
-                Text(
-                    text = "Synchronizing...",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Text(
-                    text = "May take a minute",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.outline,
-                    fontSize = 10.sp
-                )
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("Synchronizing...", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                }
             } else {
-                Text(
-                    text = if (device.isOnline) "Sync Active" else "Offline",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (device.isOnline) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.outline
-                )
+                Text("Last sync:", style = MaterialTheme.typography.labelSmall, color = Color.Gray, fontSize = 9.sp)
+                HeartbeatText(lastSeen = device.lastSeen)
                 
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 
+                // Battery
+                val batteryColor = when {
+                    device.batteryLevel > 60 -> Color(0xFF4CAF50)
+                    device.batteryLevel > 20 -> Color(0xFFFF9800)
+                    else -> Color(0xFFF44336)
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         imageVector = when {
@@ -510,43 +697,38 @@ fun DeviceGridCard(
                             else -> Icons.Default.BatteryAlert
                         },
                         contentDescription = null,
-                        modifier = Modifier.size(12.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        modifier = Modifier.size(14.dp),
+                        tint = batteryColor
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
                         text = "${device.batteryLevel}%",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        color = batteryColor,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(4.dp))
+                
+                // Events Count
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.List,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = Color.Gray
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "$eventCount events",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.Gray
                     )
                 }
             }
-            
-            Spacer(modifier = Modifier.weight(1f))
-            
-            TextButton(
-                onClick = onRename,
-                contentPadding = PaddingValues(0.dp),
-                modifier = Modifier.height(24.dp).align(Alignment.Start)
-            ) {
-                Text("Rename device", style = MaterialTheme.typography.labelSmall, fontSize = 10.sp)
-            }
         }
     }
-}
-
-@Composable
-fun animateRotation(): Float {
-    val infiniteTransition = rememberInfiniteTransition()
-    val angle by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        )
-    )
-    return angle
 }
 
 @Composable

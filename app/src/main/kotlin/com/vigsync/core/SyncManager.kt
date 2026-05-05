@@ -2,56 +2,51 @@ package com.vigsync.core
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.os.BatteryManager
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import com.vigsync.MainActivity
-import com.vigsync.core.crypto.EncryptionManager
-import com.vigsync.core.mqtt.MqttManager
-import com.vigsync.core.mqtt.MqttLogger
+import androidx.core.app.NotificationManagerCompat
+import com.vigsync.R
 import com.vigsync.core.models.Device
+import com.vigsync.core.models.RawMessage
+import com.vigsync.core.mqtt.MqttLogger
+import com.vigsync.core.mqtt.MqttManager
+import com.vigsync.data.local.DeviceStatusEntity
+import com.vigsync.data.local.EventEntity
+import com.vigsync.data.local.VigSyncDatabase
 import com.vigsync.data.prefs.AppPreferences
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import java.util.*
 import java.util.concurrent.ConcurrentHashMap
-
-import com.vigsync.core.models.SyncStatus
-import com.vigsync.core.models.EventRecord
-import com.vigsync.core.models.EventDirection
-import com.vigsync.data.local.*
 
 class SyncManager private constructor(context: Context) {
     private val appPreferences = AppPreferences(context)
     private val mqttManager = MqttManager()
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val appContext = context.applicationContext
-    
-    // --- Unified Event Buffer ---
-    private val eventBuffer = ConcurrentHashMap<String, BufferedEvent>()
-    private val BUFFER_WINDOW = 3500L // 3.5 seconds
-    
-    private val SYNC_CHANNEL_ID = "SyncedEventsChannel"
-    private val SYNC_NOTIF_ID = 1001
+    private var appContext: Context? = context.applicationContext
 
-    private data class BufferedEvent(
+    private val eventBuffer = ConcurrentHashMap<String, BufferedEvent>()
+    private val BUFFER_WINDOW = 5000L // 5 seconds
+
+    val SYNC_CHANNEL_ID = "vigsync_notifications"
+    val SYNC_NOTIF_ID = 1001
+
+    data class BufferedEvent(
         val type: String,
-        var data: String,
+        val data: String,
         val timestamp: Long,
-        var priority: Int, // 0: Telephony, 1: Notification, 2: CallLog
+        val priority: Int,
         var job: Job? = null
     )
     // ----------------------------
 
     private val database: VigSyncDatabase by lazy { 
-        VigSyncDatabase.getInstance(appContext) 
+        VigSyncDatabase.getInstance(appContext!!) 
     }
 
     private val _pairedDevicesList = MutableStateFlow<List<Device>>(emptyList())
@@ -72,73 +67,70 @@ class SyncManager private constructor(context: Context) {
 
     init {
         MqttLogger.logApp("SyncManager: Strict Instance Created (hash: ${this.hashCode()})", "TRACE")
-        createSyncNotificationChannel()
-        scope.launch {
-            loadPairedDevices()
-            startHeartbeat()
-            startEventDrivenWorker()
-            
-            // Auto-start MQTT re-enabled after hardening MqttManager status flow
-            if (appPreferences.brokerUrl.first().isNotEmpty()) {
-                MqttLogger.logApp("SyncManager: Auto-starting MQTT connection", "INFO")
-                start()
+        try {
+            createSyncNotificationChannel()
+            scope.launch {
+                try {
+                    loadPairedDevices()
+                    startHeartbeat()
+                    startEventDrivenWorker()
+                    
+                    // Auto-start MQTT re-enabled after hardening MqttManager status flow
+                    if (appPreferences.brokerUrl.first().isNotEmpty()) {
+                        MqttLogger.logApp("SyncManager: Auto-starting MQTT connection", "INFO")
+                        start()
+                    }
+                } catch (e: Exception) {
+                    MqttLogger.logApp("SyncManager: Async initialization failed: ${e.message}", "ERROR")
+                }
             }
+        } catch (e: Exception) {
+            MqttLogger.logApp("SyncManager: Initialization failed: ${e.message}", "ERROR")
         }
     }
 
     fun onRawMessageReceived(topic: String, payload: ByteArray) {
-        val threadName = Thread.currentThread().name
-        MqttLogger.logApp("STAGE 1: RAW Packet on $topic (Thread: $threadName)", "TRACE")
-        
         scope.launch {
             try {
-                val raw = RawMessage(topic = topic, payload = String(payload))
+                val json = String(payload)
+                val raw = com.vigsync.data.local.RawMessage(topic = topic, payload = json)
                 database.dao().insertRaw(raw)
-                MqttLogger.logApp("STAGE 2: Stored in HOT STORAGE (ID: pending)", "TRACE")
+                MqttLogger.log("Message received on $topic", "RECEIVED")
             } catch (e: Exception) {
-                MqttLogger.logApp("STAGE 2 ERROR: DB Insert fail: ${e.message}", "ERROR")
+                MqttLogger.log("Failed to process message on $topic: ${e.message}", "ERROR")
             }
         }
     }
 
-    private fun startEventDrivenWorker() {
+    fun startEventDrivenWorker() {
         MqttLogger.logApp("SyncManager: Event-Driven Worker Started", "TRACE")
         scope.launch {
-            // STAGE 3: Use Flow to observe Hot Storage reactively
-            database.dao().getUnprocessedFlow().collect { unprocessed ->
-                if (unprocessed.isNotEmpty()) {
-                    MqttLogger.logApp("STAGE 3: Reactive Trigger - ${unprocessed.size} items", "TRACE")
-                }
-                
-                for (msg in unprocessed) {
-                    try {
-                        MqttLogger.logApp("STAGE 3.1: Processing ID ${msg.id}", "TRACE")
-                        if (msg.topic.contains("/status/")) {
+            database.dao().getUnprocessedFlow()
+                .distinctUntilChanged()
+                .collect { messages ->
+                    messages.forEach { raw ->
+                        try {
+                            val msg = Json.decodeFromString<RawMessage>(raw.payload)
+                            
+                            // 1. Update device registry
                             updateDeviceStatus(msg)
-                        } else if (msg.topic.contains("/events/")) {
-                            processIncomingEvent(msg)
+                            
+                            // 2. Process events
+                            if (raw.topic.contains("/events/")) {
+                                processIncomingEvent(msg)
+                            }
+                            
+                            database.dao().markAsProcessed(raw.id)
+                        } catch (e: Exception) {
+                            MqttLogger.logApp("Worker: Failed to parse message ${raw.id}", "WARNING")
+                            database.dao().markAsProcessed(raw.id) // mark anyway to avoid loop
                         }
-                        database.dao().markAsProcessed(msg.id)
-                        MqttLogger.logApp("STAGE 5: ID ${msg.id} COMPLETED", "SUCCESS")
-                    } catch (e: Exception) {
-                        MqttLogger.logApp("Processor ERROR on ID ${msg.id}: ${e.message}", "ERROR")
                     }
                 }
-            }
-        }
-        
-        // Background cleanup task
-        scope.launch {
-            while(true) {
-                delay(300000) // 5 mins
-                val threshold = System.currentTimeMillis() - 3600000 // 1 hour
-                database.dao().cleanupRaw(threshold)
-                MqttLogger.logApp("Cleanup: Deleted old raw messages", "TRACE")
-            }
         }
     }
 
-    private fun loadPairedDevices() {
+    fun loadPairedDevices() {
         scope.launch {
             appPreferences.pairedDevices.first()?.let { json ->
                 try {
@@ -151,7 +143,7 @@ class SyncManager private constructor(context: Context) {
         }
     }
 
-    private fun savePairedDevices() {
+    fun savePairedDevices() {
         scope.launch {
             val json = Json.encodeToString(_pairedDevicesList.value)
             appPreferences.savePairedDevices(json)
@@ -159,25 +151,22 @@ class SyncManager private constructor(context: Context) {
     }
 
     fun addPairedDevice(device: Device) {
-        if (_pairedDevicesList.value.none { it.id == device.id }) {
-            _pairedDevicesList.update { it + device }
-            savePairedDevices()
-            
-            // Insert placeholder status so it shows up on Dashboard immediately
-            scope.launch {
-                val entity = DeviceStatusEntity(
-                    deviceId = device.id,
-                    name = device.name,
-                    batteryLevel = 0,
-                    isOnline = false,
-                    lastSeen = System.currentTimeMillis()
-                )
-                database.dao().updateDeviceStatus(entity)
-                
-                val prefix = appPreferences.topicPrefix.first() ?: return@launch
-                mqttManager.subscribe(appContext, "$prefix/status/${device.id}")
-                MqttLogger.logApp("SyncManager: Paired with ${device.name}, awaiting heartbeat", "TRACE")
+        _pairedDevicesList.update { currentList ->
+            if (currentList.any { it.id == device.id }) {
+                currentList.map { if (it.id == device.id) device else it }
+            } else {
+                currentList + device
             }
+        }
+        savePairedDevices()
+        
+        // Ensure we are subscribed to this device's status and events
+        scope.launch {
+            val prefix = appPreferences.topicPrefix.first() ?: "vigsync/default"
+            mqttManager.subscribe(appContext!!, "$prefix/events/${device.id}")
+            mqttManager.subscribe(appContext!!, "$prefix/status/${device.id}")
+            
+            MqttLogger.logApp("SyncManager: Paired with ${device.name}, awaiting heartbeat", "TRACE")
         }
     }
 
@@ -187,13 +176,18 @@ class SyncManager private constructor(context: Context) {
         }
         savePairedDevices()
         scope.launch {
+            val prefix = appPreferences.topicPrefix.first() ?: "vigsync/default"
+            // Explicitly unsubscribe so they don't pop back in
+            mqttManager.unsubscribe("$prefix/events/$deviceId")
+            mqttManager.unsubscribe("$prefix/status/$deviceId")
+
             database.dao().deleteDeviceStatus(deviceId)
             MqttLogger.logApp("SyncManager: Removed device $deviceId", "TRACE")
         }
     }
 
     fun getLocalDeviceId(): String {
-        val androidId = android.provider.Settings.Secure.getString(appContext.contentResolver, android.provider.Settings.Secure.ANDROID_ID)
+        val androidId = android.provider.Settings.Secure.getString(appContext!!.contentResolver, android.provider.Settings.Secure.ANDROID_ID)
         return "${android.os.Build.MODEL}_$androidId"
     }
 
@@ -210,15 +204,25 @@ class SyncManager private constructor(context: Context) {
             val tls = appPreferences.useTls.first()
             
             mqttManager.connect(
-                context = appContext,
+                context = appContext!!,
                 brokerUrl = url, 
                 port = port,
                 useTls = tls,
                 username = username,
                 password = password
             )
-            mqttManager.subscribe(appContext, "$prefix/events/+")
-            mqttManager.subscribe(appContext, "$prefix/status/+")
+            
+            // 1. Subscribe to own topics (for loopback/status check)
+            mqttManager.subscribe(appContext!!, "$prefix/events/${getLocalDeviceId()}")
+            mqttManager.subscribe(appContext!!, "$prefix/status/${getLocalDeviceId()}")
+
+            // 2. Subscribe to each paired device explicitly (No Wildcards to prevent ghost re-adds)
+            _pairedDevicesList.value.forEach { device ->
+                mqttManager.subscribe(appContext!!, "$prefix/events/${device.id}")
+                mqttManager.subscribe(appContext!!, "$prefix/status/${device.id}")
+            }
+            
+            MqttLogger.logApp("SyncManager: Connected and subscribed to ${_pairedDevicesList.value.size} devices", "INFO")
         }
     }
 
@@ -230,236 +234,181 @@ class SyncManager private constructor(context: Context) {
         }
     }
 
-    private suspend fun updateDeviceStatus(msg: RawMessage) {
-        try {
-            val updatedDevice = Json.decodeFromString<Device>(msg.payload)
+    fun updateDeviceStatus(msg: RawMessage) {
+        // Topic info is in RawMessage but in DB we only have payload, 
+        // so we check senderId presence as heuristic for status msg
+        if (msg.senderId == null) return
+        
+        scope.launch {
             val entity = DeviceStatusEntity(
-                deviceId = updatedDevice.id,
-                name = updatedDevice.name,
-                batteryLevel = updatedDevice.batteryLevel,
+                deviceId = msg.senderId,
+                name = msg.senderName ?: "Unknown Device",
+                batteryLevel = msg.batteryLevel ?: 0,
                 isOnline = true,
-                lastSeen = System.currentTimeMillis()
+                lastSeen = msg.timestamp
             )
             database.dao().updateDeviceStatus(entity)
-            MqttLogger.logApp("STAGE 4: Status stored for ${updatedDevice.id}", "SUCCESS")
-        } catch (e: Exception) {
-            MqttLogger.logApp("STAGE 4 ERROR: Status parse fail: ${e.message}", "ERROR")
         }
     }
 
-    private fun createSyncNotificationChannel() {
+    fun createSyncNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val name = "Synced Events"
-            val descriptionText = "Notifications for events synced from other devices"
-            val importance = NotificationManager.IMPORTANCE_DEFAULT
-            val channel = NotificationChannel(SYNC_CHANNEL_ID, name, importance).apply {
-                description = descriptionText
+            val channel = NotificationChannel(
+                SYNC_CHANNEL_ID,
+                "Sync Notifications",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Shows notifications from synced devices"
             }
-            val notificationManager: NotificationManager =
-                appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            notificationManager.createNotificationChannel(channel)
+            val manager = appContext!!.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.createNotificationChannel(channel)
         }
     }
 
-    private suspend fun showSyncNotification(type: String, sourceDevice: String, data: String) {
-        val isEnabled = when (type) {
-            "CALL" -> appPreferences.notifCalls.first()
-            "SMS" -> appPreferences.notifSms.first()
-            else -> appPreferences.notifOther.first()
-        }
-
-        if (!isEnabled) return
-
-        var displayTitle = "$type from $sourceDevice"
-        var displayText = data
-
-        if (type == "NOTIFICATION" && data.contains("|")) {
-            val parts = data.split("|", limit = 3)
-            if (parts.size == 3) {
-                val appLabel = parts[0]
-                // val pkg = parts[1]
-                val content = parts[2]
-                displayTitle = "$appLabel from $sourceDevice"
-                displayText = content
-            }
-        } else if (type == "CALL") {
-            displayTitle = "Phone Call from $sourceDevice"
-        }
-
-        val intent = Intent(appContext, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-        }
-        val pendingIntent: PendingIntent = PendingIntent.getActivity(appContext, 0, intent, PendingIntent.FLAG_IMMUTABLE)
-
-        val builder = NotificationCompat.Builder(appContext, SYNC_CHANNEL_ID)
+    fun showSyncNotification(title: String, message: String, deviceName: String) {
+        val builder = NotificationCompat.Builder(appContext!!, SYNC_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
-            .setContentTitle(displayTitle)
-            .setContentText(displayText)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setContentIntent(pendingIntent)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setSubText(deviceName)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
 
-        val notificationManager = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        notificationManager.notify("$type$data".hashCode(), builder.build())
+        with(NotificationManagerCompat.from(appContext!!)) {
+            try {
+                notify(System.currentTimeMillis().toInt(), builder.build())
+            } catch (e: SecurityException) {
+                // Handle missing permission for Android 13+
+            }
+        }
     }
 
     fun sendTestNotification() {
+        showSyncNotification("Test", "This is a test notification from VigSync", "Local Device")
+    }
+
+    fun processIncomingEvent(msg: RawMessage) {
         scope.launch {
-            showSyncNotification("TEST", "Local Device", "This is a test synchronization alert.")
-        }
-    }
+            // Deduplication
+            val hash = msg.calculateHash()
+            if (database.dao().countEventHash(hash) > 0) return@launch
 
-    private suspend fun processIncomingEvent(msg: RawMessage) {
-        val encryptedStr = msg.payload
-        val key = appPreferences.sharedKey.first() ?: return
-        val encryptionManager = EncryptionManager(key)
-        
-        val decrypted = try {
-            encryptionManager.decrypt(encryptedStr)
-        } catch (e: Exception) {
-            logRemoteFailure("Decryption Failed", "${e.message}")
-            null
-        } ?: return
+            val event = EventEntity(
+                type = msg.type ?: "OTHER",
+                data = msg.data ?: "",
+                timestamp = msg.timestamp,
+                syncStatus = com.vigsync.core.models.SyncStatus.RECEIVED,
+                direction = com.vigsync.core.models.EventDirection.REMOTE,
+                sourceDevice = msg.senderName,
+                payloadHash = hash
+            )
+            database.dao().insertEvent(event)
 
-        val parts = decrypted.split("|", limit = 3)
-        if (parts.size < 3) return
-        
-        val type = parts[0]
-        val deviceName = parts[1]
-        val data = parts[2]
-        
-        val payloadHash = encryptedStr.hashCode().toString()
-        if (database.dao().countEventHash(payloadHash) > 0) return
+            // Show Notification based on settings
+            val shouldNotify = when (msg.type) {
+                "CALL" -> appPreferences.notifCalls.first()
+                "SMS" -> appPreferences.notifSms.first()
+                else -> appPreferences.notifOther.first()
+            }
 
-        val eventEntity = EventEntity(
-            type = type,
-            data = data,
-            timestamp = System.currentTimeMillis(),
-            syncStatus = SyncStatus.RECEIVED,
-            direction = EventDirection.REMOTE,
-            sourceDevice = deviceName,
-            payloadHash = payloadHash
-        )
-        database.dao().insertEvent(eventEntity)
-        MqttLogger.logApp("STAGE 4: Synced $type stored", "SUCCESS")
-        showSyncNotification(type, deviceName, data)
-    }
-
-    private fun logRemoteFailure(type: String, message: String) {
-        val record = EventRecord(
-            type = "SYNC ERROR",
-            data = message,
-            syncStatus = SyncStatus.FAILED,
-            direction = EventDirection.REMOTE,
-            errorMessage = type
-        )
-        MqttLogger.logEvent(record)
-    }
-
-    private fun startHeartbeat() {
-        scope.launch {
-            while (true) {
-                sendHeartbeat()
-                delay(60000)
+            if (shouldNotify) {
+                showSyncNotification(
+                    title = "${msg.type} from ${msg.senderName}",
+                    message = msg.data ?: "",
+                    deviceName = msg.senderName ?: "Unknown"
+                )
             }
         }
     }
 
-    private fun sendHeartbeat() {
+    fun logRemoteFailure(deviceId: String, error: String) {
+        MqttLogger.log("Remote Error ($deviceId): $error", "ERROR")
+    }
+
+    fun startHeartbeat() {
         scope.launch {
-            val prefix = appPreferences.topicPrefix.first() ?: return@launch
-            val androidId = android.provider.Settings.Secure.getString(appContext.contentResolver, android.provider.Settings.Secure.ANDROID_ID)
-            val deviceId = "${android.os.Build.MODEL}_$androidId"
-            
-            val device = Device(
-                id = deviceId,
-                name = android.os.Build.MODEL,
-                batteryLevel = getBatteryLevel(),
-                isOnline = true,
-                lastSeen = System.currentTimeMillis()
-            )
-            
-            val json = Json.encodeToString(device)
-            mqttManager.publish("$prefix/status/$deviceId", json.toByteArray())
+            while (isActive) {
+                sendHeartbeat()
+                delay(60000) // 1 minute
+            }
         }
     }
 
-    private fun getBatteryLevel(): Int {
-        return try {
-            val intentFilter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
-            val batteryStatus = appContext.registerReceiver(null, intentFilter)
-            val level = batteryStatus?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
-            val scale = batteryStatus?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
-            if (level != -1 && scale > 0) (level * 100 / scale.toFloat()).toInt() else 0
-        } catch (e: Exception) { 0 }
+    fun sendHeartbeat() {
+        scope.launch {
+            val prefix = appPreferences.topicPrefix.first() ?: "vigsync/default"
+            val topic = "$prefix/status/${getLocalDeviceId()}"
+            val msg = RawMessage(
+                senderId = getLocalDeviceId(),
+                senderName = android.os.Build.MODEL,
+                batteryLevel = getBatteryLevel(),
+                timestamp = System.currentTimeMillis()
+            )
+            val json = Json.encodeToString(msg)
+            mqttManager.publish(topic, json.toByteArray())
+        }
+    }
+
+    fun getBatteryLevel(): Int {
+        val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+        val batteryStatus: Intent? = appContext!!.registerReceiver(null, filter)
+        val level: Int = batteryStatus?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale: Int = batteryStatus?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1) ?: -1
+        return if (level >= 0 && scale > 0) (level * 100 / scale.toFloat()).toInt() else 0
     }
 
     fun publishEvent(type: String, data: String) {
-        val priority = when {
-            data.startsWith("Call") -> 2 // CallLog
-            type == "NOTIFICATION" && (data.contains("dialer") || data.contains("telecom")) -> 1 // System Dialer Notification
-            else -> 0
+        val eventId = "${type}_${data.hashCode()}"
+        
+        // Priority logic: Calls are high priority (send immediately)
+        if (type == "CALL") {
+            publishNow(type, data, System.currentTimeMillis())
+            return
         }
 
-        // Deduplication key for calls is the number (if extractable)
-        val key = if (type == "CALL" || type == "NOTIFICATION" && data.contains("Incoming")) {
-            extractPhoneNumber(data) ?: UUID.randomUUID().toString()
-        } else {
-            UUID.randomUUID().toString()
-        }
-
-        scope.launch {
-            val existing = eventBuffer[key]
-            if (existing != null) {
-                if (priority >= existing.priority) {
-                    existing.job?.cancel()
-                    existing.priority = priority
-                    existing.data = data
-                    scheduleBufferPublication(key)
-                }
-            } else {
-                eventBuffer[key] = BufferedEvent(type, data, System.currentTimeMillis(), priority)
-                scheduleBufferPublication(key)
-            }
-        }
+        // Buffer logic for SMS/Others
+        scheduleBufferPublication(eventId)
+        
+        val buffered = BufferedEvent(type, data, System.currentTimeMillis(), 0)
+        eventBuffer[eventId] = buffered
     }
 
-    private fun extractPhoneNumber(data: String): String? {
-        // Simple regex to find potential phone numbers in the message
-        val pattern = Regex("(\\+?\\d[\\d\\-\\s]{7,15})")
-        return pattern.find(data)?.value?.replace("\\s|-".toRegex(), "")
+    fun extractPhoneNumber(data: String): String? {
+        val regex = Regex("""\+?\d[\d\-\s]{7,}\d""")
+        return regex.find(data)?.value
     }
 
-    private fun scheduleBufferPublication(key: String) {
-        val event = eventBuffer[key] ?: return
-        event.job = scope.launch {
+    fun scheduleBufferPublication(id: String) {
+        eventBuffer[id]?.job?.cancel()
+        val job = scope.launch {
             delay(BUFFER_WINDOW)
-            publishNow(event.type, event.data, event.timestamp)
-            eventBuffer.remove(key)
+            eventBuffer[id]?.let { 
+                publishNow(it.type, it.data, it.timestamp)
+                eventBuffer.remove(id)
+            }
         }
+        eventBuffer[id]?.job = job
     }
 
-    private fun publishNow(type: String, data: String, timestamp: Long) {
-        MqttLogger.logEvent(EventRecord(type, data, timestamp, SyncStatus.PENDING))
-
+    fun publishNow(type: String, data: String, timestamp: Long) {
         scope.launch {
-            val key = appPreferences.sharedKey.first() ?: return@launch
-            val prefix = appPreferences.topicPrefix.first() ?: return@launch
-            
-            val encryptionManager = EncryptionManager(key)
-            val payload = "$type|${android.os.Build.MODEL}|$data"
-            val encrypted = encryptionManager.encrypt(payload) ?: return@launch
-            
-            mqttManager.publish("$prefix/events/$type", encrypted.toByteArray()).thenAccept {
-                MqttLogger.updateEventStatus(timestamp, SyncStatus.SENT)
-            }.exceptionally {
-                MqttLogger.updateEventStatus(timestamp, SyncStatus.FAILED, it.message)
-                null
+            val prefix = appPreferences.topicPrefix.first() ?: "vigsync/default"
+            val topic = "$prefix/events/${getLocalDeviceId()}"
+            val msg = RawMessage(
+                type = type,
+                data = data,
+                senderId = getLocalDeviceId(),
+                senderName = android.os.Build.MODEL,
+                timestamp = timestamp
+            )
+            val json = Json.encodeToString(msg)
+            mqttManager.publish(topic, json.toByteArray()).thenAccept {
+                MqttLogger.log("Sent $type event", "SENT")
             }
         }
     }
-    
+
     fun getMqttManager() = mqttManager
-    
-    fun getDao(): VigSyncDao = database.dao()
+
+    fun getDao() = database.dao()
 }

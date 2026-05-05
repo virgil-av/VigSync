@@ -257,6 +257,23 @@ class MqttManager {
         } ?: CompletableFuture.completedFuture(null)
     }
 
+    fun unsubscribe(topic: String): CompletableFuture<Void> {
+        synchronized(pendingSubscriptions) {
+            pendingSubscriptions.remove(topic)
+        }
+
+        val client = if (currentVersion == 5) client5 else client3
+        if (client == null || !client.state.isConnected) {
+            return CompletableFuture.completedFuture(null)
+        }
+
+        return if (currentVersion == 5) {
+            client5?.unsubscribeWith()?.topicFilter(topic)?.send()?.thenAccept { } ?: CompletableFuture.completedFuture(null)
+        } else {
+            client3?.unsubscribeWith()?.topicFilter(topic)?.send()?.thenAccept { } ?: CompletableFuture.completedFuture(null)
+        }
+    }
+
     fun publish(topic: String, payload: ByteArray): CompletableFuture<*> {
         val client = if (currentVersion == 5) client5 else client3
         if (client == null) {

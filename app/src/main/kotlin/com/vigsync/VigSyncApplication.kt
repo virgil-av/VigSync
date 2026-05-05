@@ -10,11 +10,18 @@ class VigSyncApplication : Application() {
     lateinit var syncManager: SyncManager
         private set
 
+    lateinit var crashHandler: com.vigsync.core.GlobalCrashHandler
+        private set
+
     override fun onCreate() {
         super.onCreate()
         instance = this
         
+        crashHandler = com.vigsync.core.GlobalCrashHandler(this)
+        
         MqttLogger.logApp("Application: onCreate() - Initializing strict singleton", "TRACE")
+        crashHandler.checkAndLogLastCrash()
+
         syncManager = SyncManager.getInstance(this)
         MqttLogger.logApp("Application: SyncManager hash: ${syncManager.hashCode()}", "TRACE")
     }

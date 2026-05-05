@@ -39,7 +39,11 @@ class MqttService : Service() {
         createNotificationChannel()
         // Android 14+ requires calling startForeground immediately
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(NOTIFICATION_ID, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            startForeground(
+                NOTIFICATION_ID, 
+                createNotification(), 
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
         } else {
             startForeground(NOTIFICATION_ID, createNotification())
         }
@@ -60,7 +64,11 @@ class MqttService : Service() {
             ACTION_START -> {
                 MqttLogger.log("Service Started: Maintaining connection", "INFO")
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    startForeground(NOTIFICATION_ID, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+                    startForeground(
+                        NOTIFICATION_ID, 
+                        createNotification(), 
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                    )
                 } else {
                     startForeground(NOTIFICATION_ID, createNotification())
                 }
@@ -71,7 +79,11 @@ class MqttService : Service() {
             null -> {
                 // If system restarts service, ensure it's in foreground
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    startForeground(NOTIFICATION_ID, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+                    startForeground(
+                        NOTIFICATION_ID, 
+                        createNotification(), 
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                    )
                 } else {
                     startForeground(NOTIFICATION_ID, createNotification())
                 }
@@ -89,7 +101,11 @@ class MqttService : Service() {
         
         // Ensure foreground is started
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(NOTIFICATION_ID, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            startForeground(
+                NOTIFICATION_ID, 
+                createNotification(), 
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
         } else {
             startForeground(NOTIFICATION_ID, createNotification())
         }

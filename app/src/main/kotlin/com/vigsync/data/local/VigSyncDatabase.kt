@@ -47,6 +47,9 @@ interface VigSyncDao {
     @Query("DELETE FROM device_status WHERE deviceId = :deviceId")
     suspend fun deleteDeviceStatus(deviceId: String)
 
+    @Query("SELECT COUNT(*) FROM events WHERE sourceDevice = :deviceName")
+    fun getEventCountForDevice(deviceName: String): Flow<Int>
+
     @Query("DELETE FROM events")
     suspend fun clearAllEvents()
 
@@ -69,7 +72,7 @@ class Converters {
     fun toDirection(value: String) = EventDirection.valueOf(value)
 }
 
-@Database(entities = [RawMessage::class, EventEntity::class, DeviceStatusEntity::class, HostProtocolEntity::class], version = 2)
+@Database(entities = [RawMessage::class, EventEntity::class, DeviceStatusEntity::class, HostProtocolEntity::class], version = 5)
 @TypeConverters(Converters::class)
 abstract class VigSyncDatabase : RoomDatabase() {
     abstract fun dao(): VigSyncDao
@@ -80,15 +83,14 @@ abstract class VigSyncDatabase : RoomDatabase() {
 
         fun getInstance(context: Context): VigSyncDatabase {
             return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
+                INSTANCE ?: Room.databaseBuilder(
                     context.applicationContext,
                     VigSyncDatabase::class.java,
                     "vigsync_db"
                 )
                 .fallbackToDestructiveMigration()
-                .build()
-                INSTANCE = instance
-                instance
+                .fallbackToDestructiveMigrationOnDowngrade()
+                .build().also { INSTANCE = it }
             }
         }
     }
