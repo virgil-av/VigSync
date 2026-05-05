@@ -6,15 +6,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
@@ -28,14 +26,65 @@ import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun EventsScreen(viewModel: EventsViewModel = viewModel()) {
+fun EventsScreen(
+    viewModel: EventsViewModel = viewModel(),
+    deviceName: String? = null
+) {
     val events by viewModel.events.collectAsState()
+    val devices by viewModel.devices.collectAsState()
+    val selectedDevice by viewModel.selectedDevice.collectAsState()
+    
+    var expanded by remember { mutableStateOf(false) }
+
+    LaunchedEffect(deviceName) {
+        if (deviceName != null) {
+            viewModel.setSelectedDevice(deviceName)
+        }
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Event Timeline") },
                 actions = {
+                    Box(modifier = Modifier.padding(end = 8.dp)) {
+                        TextButton(onClick = { expanded = true }) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = selectedDevice ?: "All Devices",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.widthIn(max = 120.dp)
+                                )
+                                Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                            }
+                        }
+                        DropdownMenu(
+                            expanded = expanded,
+                            onDismissRequest = { expanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("All Devices") },
+                                onClick = {
+                                    viewModel.setSelectedDevice(null)
+                                    expanded = false
+                                },
+                                leadingIcon = { Icon(Icons.Default.Devices, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                            )
+                            devices.forEach { device ->
+                                DropdownMenuItem(
+                                    text = { Text(device) },
+                                    onClick = {
+                                        viewModel.setSelectedDevice(device)
+                                        expanded = false
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.PhoneAndroid, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                                )
+                            }
+                        }
+                    }
+
                     IconButton(onClick = { viewModel.clearEvents() }) {
                         Icon(Icons.Default.DeleteSweep, contentDescription = "Clear All")
                     }

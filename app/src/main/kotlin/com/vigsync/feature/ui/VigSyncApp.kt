@@ -21,14 +21,16 @@ import androidx.navigation.NavType
 import androidx.compose.material.icons.filled.*
 import com.vigsync.feature.ui.screens.*
 
-sealed class Screen(val route: String, val label: String, val icon: @Composable () -> Unit) {
-    object Dashboard : Screen("dashboard", "Home", { Icon(Icons.Default.Home, contentDescription = null) })
-    object Events : Screen("events", "Events", { Icon(Icons.Default.List, contentDescription = null) })
-    object Pairing : Screen("pairing?startScanner={startScanner}", "Pair", { Icon(Icons.Default.QrCode, contentDescription = null) }) {
+sealed class Screen(val route: String, val baseRoute: String, val label: String, val icon: @Composable () -> Unit) {
+    object Dashboard : Screen("dashboard", "dashboard", "Home", { Icon(Icons.Default.Home, contentDescription = null) })
+    object Events : Screen("events?deviceName={deviceName}", "events", "Events", { Icon(Icons.Default.List, contentDescription = null) }) {
+        fun createRoute(deviceName: String? = null) = if (deviceName != null) "events?deviceName=$deviceName" else "events"
+    }
+    object Pairing : Screen("pairing?startScanner={startScanner}", "pairing", "Pair", { Icon(Icons.Default.QrCode, contentDescription = null) }) {
         fun createRoute(startScanner: Boolean) = "pairing?startScanner=$startScanner"
     }
-    object Debug : Screen("debug", "Debug", { Icon(Icons.Default.BugReport, contentDescription = null) })
-    object Settings : Screen("settings", "Settings", { Icon(Icons.Default.Settings, contentDescription = null) })
+    object Debug : Screen("debug", "debug", "Debug", { Icon(Icons.Default.BugReport, contentDescription = null) })
+    object Settings : Screen("settings", "settings", "Settings", { Icon(Icons.Default.Settings, contentDescription = null) })
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -44,18 +46,33 @@ fun VigSyncApp() {
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
                 val currentDestination = navBackStackEntry?.destination
                 items.forEach { screen ->
-                    val isSelected = currentDestination?.hierarchy?.any { it.route?.split("?")?.firstOrNull() == screen.route.split("?")?.firstOrNull() } == true
+                    // Match by base route to handle parameters correctly
+                    val isSelected = currentDestination?.hierarchy?.any { 
+                        it.route?.substringBefore("?") == screen.baseRoute 
+                    } == true
+                    
                     NavigationBarItem(
                         icon = screen.icon,
                         label = { Text(screen.label) },
                         selected = isSelected,
                         onClick = {
-                            navController.navigate(screen.route) {
+                            // If we are already on this screen (even with different params), 
+                            // navigating to the baseRoute will clear them.
+                            navController.navigate(screen.baseRoute) {
+                                // Pop up to the start destination of the graph to
+                                // avoid building up a large stack of destinations
+                                // on the back stack as users select items
                                 popUpTo(navController.graph.findStartDestination().id) {
                                     saveState = true
                                 }
+                                // Avoid multiple copies of the same destination when
+                                // reselecting the same item
                                 launchSingleTop = true
-                                restoreState = true
+                                // Restore state when reselecting a previously selected item
+                                // But ONLY if we're not trying to reset a filtered view
+                                if (!isSelected) {
+                                    restoreState = true
+                                }
                             }
                         }
                     )
@@ -65,9 +82,19 @@ fun VigSyncApp() {
     ) { innerPadding ->
         NavHost(navController, startDestination = Screen.Dashboard.route, Modifier.padding(innerPadding)) {
             composable(Screen.Dashboard.route) { 
-                DashboardScreen() 
+                DashboardScreen(navController = navController) 
             }
-            composable(Screen.Events.route) { EventsScreen() }
+            composable(
+                route = Screen.Events.route,
+                arguments = listOf(navArgument("deviceName") { 
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                })
+            ) { backStackEntry ->
+                val deviceName = backStackEntry.arguments?.getString("deviceName")
+                EventsScreen(deviceName = deviceName)
+            }
             composable(Screen.Debug.route) { DebugScreen() }
             composable(Screen.Settings.route) { SettingsScreen() }
         }

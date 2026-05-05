@@ -12,12 +12,30 @@ import kotlinx.coroutines.launch
 class EventsViewModel(application: Application) : AndroidViewModel(application) {
     private val database = VigSyncDatabase.getInstance(application)
 
-    val events = database.dao().getAllEvents()
+    private val _selectedDevice = MutableStateFlow<String?>(null)
+    val selectedDevice = _selectedDevice.asStateFlow()
+
+    val devices = database.dao().getAllEvents()
+        .map { events -> 
+            events.mapNotNull { it.sourceDevice }.distinct().sorted()
+        }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = emptyList()
         )
+
+    val events = combine(database.dao().getAllEvents(), _selectedDevice) { allEvents, filter ->
+        if (filter == null) allEvents else allEvents.filter { it.sourceDevice == filter }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    fun setSelectedDevice(deviceName: String?) {
+        _selectedDevice.value = deviceName
+    }
 
     fun clearEvents() {
         viewModelScope.launch {

@@ -34,7 +34,8 @@ enum class PairingTab { MY_QR, SCAN_QR }
 @Composable
 fun DashboardScreen(
     viewModel: DashboardViewModel = viewModel(),
-    pairingViewModel: PairingViewModel = viewModel()
+    pairingViewModel: PairingViewModel = viewModel(),
+    navController: androidx.navigation.NavController? = null
 ) {
     val devices: List<com.vigsync.data.local.DeviceStatusEntity> by viewModel.pairedDevices.collectAsState(initial = emptyList())
     val isSyncActive: Boolean by viewModel.isSyncActive.collectAsState()
@@ -261,7 +262,19 @@ fun DashboardScreen(
                         device = device,
                         eventCount = eventCount,
                         onRename = { renamingDevice = device },
-                        onDelete = { showDeleteConfirmation = device }
+                        onDelete = { showDeleteConfirmation = device },
+                        onClick = {
+                            if (eventCount > 0) {
+                                navController?.navigate(com.vigsync.feature.ui.Screen.Events.createRoute(device.name)) {
+                                    // Ensure we switch to the Events tab properly
+                                    popUpTo(com.vigsync.feature.ui.Screen.Dashboard.baseRoute) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            }
+                        }
                     )
                 }
                 
@@ -695,7 +708,8 @@ fun DeviceGridCard(
     device: com.vigsync.data.local.DeviceStatusEntity,
     eventCount: Int,
     onRename: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onClick: () -> Unit = {}
 ) {
     // Show Synchronizing if it's never been online AND was added in the last 120 seconds
     val pairingTime = device.pairingTimestamp ?: 0L
@@ -708,7 +722,8 @@ fun DeviceGridCard(
         modifier = Modifier.fillMaxWidth().height(170.dp),
         colors = CardDefaults.outlinedCardColors(
             containerColor = if (device.isOnline) Color(0xFFE8F5E9) else Color(0xFFF8F9FA)
-        )
+        ),
+        onClick = onClick
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(
