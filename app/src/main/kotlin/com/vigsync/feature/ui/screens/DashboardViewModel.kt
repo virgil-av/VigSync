@@ -14,9 +14,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 import com.vigsync.data.local.VigSyncDatabase
+import com.vigsync.data.local.DeviceStatusEntity
+import com.vigsync.core.mqtt.LogEntry
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.Flow
 
 class DashboardViewModel(application: Application) : AndroidViewModel(application) {
     private val syncManager = SyncManager.getInstance(application)
@@ -25,22 +29,27 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     
     val connectionStatus = syncManager.getMqttManager().connectionStatus
     
-    val localDeviceId = syncManager.getLocalDeviceId()
-    val pairedDevices = database.dao().getAllDeviceStatus()
+    val localDeviceId: String = syncManager.getLocalDeviceId()
+    
+    val pairedDevices: StateFlow<List<DeviceStatusEntity>> = database.dao().getAllDeviceStatus()
         .map { list -> list.filter { it.deviceId != localDeviceId } }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList<DeviceStatusEntity>())
 
-    val recentEvents = MqttLogger.logs.map { it.filter { entry -> entry.status == "RECEIVED" || entry.status == "SENT" } }
+    val recentEvents: Flow<List<LogEntry>> = MqttLogger.logs.map { it.filter { entry: LogEntry -> entry.status == "RECEIVED" || entry.status == "SENT" } }
 
-    private val _isServiceRunning = MutableStateFlow<Boolean>(MqttService.isServiceRunning())
-    val isServiceRunning = _isServiceRunning.asStateFlow()
+    private val _isServiceRunning: MutableStateFlow<Boolean> = MutableStateFlow<Boolean>(MqttService.isServiceRunning())
+    val isServiceRunning: StateFlow<Boolean> = _isServiceRunning.asStateFlow()
 
-    private val _isSyncActive = MutableStateFlow<Boolean>(MqttService.isSyncActive())
-    val isSyncActive = _isSyncActive.asStateFlow()
+    private val _isSyncActive: MutableStateFlow<Boolean> = MutableStateFlow<Boolean>(MqttService.isSyncActive())
+    val isSyncActive: StateFlow<Boolean> = _isSyncActive.asStateFlow()
 
-    val shareCalls = appPreferences.notifCalls
-    val shareSms = appPreferences.notifSms
-    val shareNotifications = appPreferences.notifOther
+    fun retryConnection() {
+        syncManager.restart()
+    }
+
+    val shareCalls: Flow<Boolean> = appPreferences.notifCalls
+    val shareSms: Flow<Boolean> = appPreferences.notifSms
+    val shareNotifications: Flow<Boolean> = appPreferences.notifOther
 
     fun updateSharingPreferences(calls: Boolean, sms: Boolean, notifications: Boolean) {
         viewModelScope.launch {
@@ -78,7 +87,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun getEventCount(deviceName: String) = database.dao().getEventCountForDevice(deviceName)
+    fun getEventCount(deviceName: String): Flow<Int> = database.dao().getEventCountForDevice(deviceName)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     fun toggleSync(permissionsGranted: Boolean = true) {

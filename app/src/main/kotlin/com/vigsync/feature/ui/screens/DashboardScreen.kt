@@ -3,6 +3,7 @@ package com.vigsync.feature.ui.screens
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -25,6 +26,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vigsync.feature.ui.components.QrScanner
 import java.text.SimpleDateFormat
 import java.util.*
+import com.vigsync.feature.ui.screens.DashboardViewModel
 
 enum class PairingTab { MY_QR, SCAN_QR }
 
@@ -34,18 +36,18 @@ fun DashboardScreen(
     viewModel: DashboardViewModel = viewModel(),
     pairingViewModel: PairingViewModel = viewModel()
 ) {
-    val devices by viewModel.pairedDevices.collectAsState()
-    val isSyncActive by viewModel.isSyncActive.collectAsState()
-    val connectionStatus by viewModel.connectionStatus.collectAsState(initial = com.vigsync.core.mqtt.MqttConnectionStatus.DISCONNECTED)
+    val devices: List<com.vigsync.data.local.DeviceStatusEntity> by viewModel.pairedDevices.collectAsState(initial = emptyList())
+    val isSyncActive: Boolean by viewModel.isSyncActive.collectAsState()
+    val connectionStatus: com.vigsync.core.mqtt.MqttConnectionStatus by viewModel.connectionStatus.collectAsState(initial = com.vigsync.core.mqtt.MqttConnectionStatus.DISCONNECTED)
     
-    val shareCalls by viewModel.shareCalls.collectAsState(initial = false)
-    val shareSms by viewModel.shareSms.collectAsState(initial = false)
-    val shareNotifications by viewModel.shareNotifications.collectAsState(initial = false)
+    val shareCalls: Boolean by viewModel.shareCalls.collectAsState(initial = false)
+    val shareSms: Boolean by viewModel.shareSms.collectAsState(initial = false)
+    val shareNotifications: Boolean by viewModel.shareNotifications.collectAsState(initial = false)
 
-    var showSharingDialog by remember { mutableStateOf(false) }
-    var localShareCalls by remember { mutableStateOf(false) }
-    var localShareSms by remember { mutableStateOf(false) }
-    var localShareNotifications by remember { mutableStateOf(false) }
+    var showSharingDialog by remember { mutableStateOf<Boolean>(false) }
+    var localShareCalls by remember { mutableStateOf<Boolean>(false) }
+    var localShareSms by remember { mutableStateOf<Boolean>(false) }
+    var localShareNotifications by remember { mutableStateOf<Boolean>(false) }
 
     var showPairingDialog by remember { mutableStateOf<PairingTab?>(null) }
     var showDeleteConfirmation by remember { mutableStateOf<com.vigsync.data.local.DeviceStatusEntity?>(null) }
@@ -214,7 +216,8 @@ fun DashboardScreen(
                         showSharingDialog = true 
                     }
                 },
-                onMyQrClick = { showPairingDialog = PairingTab.MY_QR }
+                onMyQrClick = { showPairingDialog = PairingTab.MY_QR },
+                onRetryClick = { viewModel.retryConnection() }
             )
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -259,7 +262,8 @@ fun MyDeviceCard(
     isSharing: Boolean,
     lastSeen: Long,
     onShareClick: () -> Unit,
-    onMyQrClick: () -> Unit
+    onMyQrClick: () -> Unit,
+    onRetryClick: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -287,7 +291,7 @@ fun MyDeviceCard(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    MqttStatusBadgeInline(status = connectionStatus)
+                    MqttStatusBadgeInline(status = connectionStatus, onRetry = onRetryClick)
                     if (isSharing) {
                         Spacer(modifier = Modifier.width(8.dp))
                         HeartbeatText(lastSeen = lastSeen)
@@ -318,7 +322,10 @@ fun MyDeviceCard(
 }
 
 @Composable
-fun MqttStatusBadgeInline(status: com.vigsync.core.mqtt.MqttConnectionStatus) {
+fun MqttStatusBadgeInline(
+    status: com.vigsync.core.mqtt.MqttConnectionStatus,
+    onRetry: () -> Unit = {}
+) {
     val (color, text, icon) = when (status) {
         com.vigsync.core.mqtt.MqttConnectionStatus.CONNECTED -> Triple(Color(0xFF4CAF50), "Online", Icons.Default.Cloud)
         com.vigsync.core.mqtt.MqttConnectionStatus.CONNECTING -> Triple(Color(0xFFFF9800), "Connecting", Icons.Default.CloudQueue)
@@ -328,7 +335,7 @@ fun MqttStatusBadgeInline(status: com.vigsync.core.mqtt.MqttConnectionStatus) {
     Surface(
         color = color.copy(alpha = 0.1f),
         shape = MaterialTheme.shapes.small,
-        modifier = Modifier.height(IntrinsicSize.Min)
+        modifier = Modifier.height(IntrinsicSize.Min).clickable(enabled = status == com.vigsync.core.mqtt.MqttConnectionStatus.DISCONNECTED) { onRetry() }
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
@@ -342,7 +349,7 @@ fun MqttStatusBadgeInline(status: com.vigsync.core.mqtt.MqttConnectionStatus) {
             )
             Spacer(modifier = Modifier.width(4.dp))
             Text(
-                text = text,
+                text = if (status == com.vigsync.core.mqtt.MqttConnectionStatus.DISCONNECTED) "Offline (Retry)" else text,
                 style = MaterialTheme.typography.labelSmall,
                 color = color,
                 fontWeight = FontWeight.Bold,
@@ -626,7 +633,11 @@ fun DeviceGridCard(
     onRename: () -> Unit,
     onDelete: () -> Unit
 ) {
-    val isNew = !device.isOnline && (System.currentTimeMillis() - device.lastSeen < 60000)
+    // Show Synchronizing if it's never been online AND was added in the last 120 seconds
+    val pairingTime = device.pairingTimestamp ?: 0L
+    val timeSincePairing = System.currentTimeMillis() - pairingTime
+    val isSynchronizing = !device.isOnline && pairingTime > 0 && timeSincePairing < 120000
+    
     var showMenu by remember { mutableStateOf(false) }
 
     OutlinedCard(
@@ -671,11 +682,24 @@ fun DeviceGridCard(
             
             Spacer(modifier = Modifier.height(4.dp))
             
-            if (isNew) {
+            if (isSynchronizing) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text("Synchronizing...", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                    
+                    Text(
+                        text = "Synchronizing...",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "It may take up to 2 minutes. If not, check if the other phone is online and connected to MQTT.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 8.sp,
+                        lineHeight = 10.sp
+                    )
                 }
             } else {
                 Text("Last sync:", style = MaterialTheme.typography.labelSmall, color = Color.Gray, fontSize = 9.sp)

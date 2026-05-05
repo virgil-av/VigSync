@@ -69,15 +69,19 @@ fun QrScanner(onScan: (String) -> Unit) {
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                         .build()
 
+                    var isScanned = false
                     imageAnalysis.setAnalyzer(executor) { imageProxy ->
                         @androidx.annotation.OptIn(androidx.camera.core.ExperimentalGetImage::class)
                         val mediaImage = imageProxy.image
-                        if (mediaImage != null) {
+                        if (mediaImage != null && !isScanned) {
                             val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
                             scanner.process(image)
                                 .addOnSuccessListener { barcodes ->
-                                    for (barcode in barcodes) {
-                                        barcode.rawValue?.let { onScan(it) }
+                                    if (isScanned) return@addOnSuccessListener
+                                    val firstBarcode = barcodes.firstOrNull { it.rawValue != null }
+                                    if (firstBarcode != null) {
+                                        isScanned = true
+                                        onScan(firstBarcode.rawValue!!)
                                     }
                                 }
                                 .addOnCompleteListener { imageProxy.close() }

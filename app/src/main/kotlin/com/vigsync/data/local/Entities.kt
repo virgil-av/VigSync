@@ -34,7 +34,8 @@ data class DeviceStatusEntity(
     val batteryLevel: Int,
     val isOnline: Boolean,
     val lastSeen: Long,
-    val customLabel: String? = null
+    val customLabel: String? = null,
+    val pairingTimestamp: Long? = null
 )
 
 @Entity(tableName = "host_protocols")

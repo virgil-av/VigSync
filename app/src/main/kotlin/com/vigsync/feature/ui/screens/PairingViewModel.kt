@@ -83,7 +83,8 @@ class PairingViewModel(application: Application) : AndroidViewModel(application)
                 name = data.deviceName,
                 batteryLevel = 0,
                 isOnline = false,
-                lastSeen = System.currentTimeMillis()
+                lastSeen = System.currentTimeMillis(),
+                pairingTimestamp = System.currentTimeMillis()
             )
             dao.updateDeviceStatus(entity)
 

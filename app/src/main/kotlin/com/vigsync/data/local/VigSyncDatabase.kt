@@ -38,6 +38,12 @@ interface VigSyncDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun updateDeviceStatus(status: DeviceStatusEntity)
 
+@Query("UPDATE device_status SET isOnline = :isOnline, lastSeen = :lastSeen, batteryLevel = :batteryLevel WHERE deviceId = :deviceId")
+    suspend fun updateHeartbeat(deviceId: String, isOnline: Boolean, lastSeen: Long, batteryLevel: Int)
+
+    @Query("SELECT * FROM device_status WHERE deviceId = :deviceId")
+    suspend fun getDeviceStatus(deviceId: String): DeviceStatusEntity?
+
     @Query("SELECT * FROM device_status ORDER BY lastSeen DESC")
     fun getAllDeviceStatus(): Flow<List<DeviceStatusEntity>>
 
@@ -72,7 +78,7 @@ class Converters {
     fun toDirection(value: String) = EventDirection.valueOf(value)
 }
 
-@Database(entities = [RawMessage::class, EventEntity::class, DeviceStatusEntity::class, HostProtocolEntity::class], version = 5)
+@Database(entities = [RawMessage::class, EventEntity::class, DeviceStatusEntity::class, HostProtocolEntity::class], version = 6)
 @TypeConverters(Converters::class)
 abstract class VigSyncDatabase : RoomDatabase() {
     abstract fun dao(): VigSyncDao

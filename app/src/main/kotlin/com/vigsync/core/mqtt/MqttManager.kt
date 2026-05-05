@@ -3,9 +3,12 @@ package com.vigsync.core.mqtt
 import com.hivemq.client.mqtt.MqttClient
 import com.hivemq.client.mqtt.mqtt3.Mqtt3AsyncClient
 import com.hivemq.client.mqtt.mqtt5.Mqtt5AsyncClient
+import com.hivemq.client.mqtt.mqtt3.message.connect.connack.Mqtt3ConnAck
+import com.hivemq.client.mqtt.mqtt5.message.connect.connack.Mqtt5ConnAck
 import com.vigsync.core.SyncManager
 import com.vigsync.data.local.HostProtocolEntity
 import android.content.Context
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -128,18 +131,29 @@ class MqttManager {
         url: String, port: Int, clientId: String, useTls: Boolean, 
         user: String?, pass: String?
     ): CompletableFuture<*> {
+        val appContext = context.applicationContext
         var builder = MqttClient.builder()
             .useMqttVersion5()
             .identifier(clientId)
             .serverHost(url)
             .serverPort(port)
-            .automaticReconnectWithDefaultConfig()
+            .automaticReconnect()
+                .initialDelay(1, TimeUnit.SECONDS)
+                .maxDelay(10, TimeUnit.SECONDS)
+                .applyAutomaticReconnect()
 
         if (useTls) builder = builder.sslWithDefaultConfig()
 
         val asyncClient = builder
+            .addConnectedListener {
+                MqttLogger.log("Mqtt v5 Connected (Auto-reconnect)", "SUCCESS")
+                _connectionStatus.value = MqttConnectionStatus.CONNECTED
+                // Re-subscribe to pending topics on auto-reconnect
+                val subs = synchronized(pendingSubscriptions) { pendingSubscriptions.toList() }
+                subs.forEach { subscribe(appContext, it) }
+            }
             .addDisconnectedListener { 
-                val reason = it.cause?.message ?: "Normal Closure"
+                val reason = it.cause?.message ?: it.source.toString()
                 MqttLogger.log("Disconnected (v5): $reason", "ERROR")
                 _connectionStatus.value = MqttConnectionStatus.DISCONNECTED
             }
@@ -166,7 +180,7 @@ class MqttManager {
             
             // Re-subscribe to pending topics
             val subs = synchronized(pendingSubscriptions) { pendingSubscriptions.toList() }
-            subs.forEach { subscribe(context, it) }
+            subs.forEach { subscribe(appContext, it) }
 
             it
         }
@@ -177,16 +191,27 @@ class MqttManager {
         url: String, port: Int, clientId: String, useTls: Boolean, 
         user: String?, pass: String?
     ): CompletableFuture<*> {
+        val appContext = context.applicationContext
         var builder = MqttClient.builder()
             .useMqttVersion3()
             .identifier(clientId)
             .serverHost(url)
             .serverPort(port)
-            .automaticReconnectWithDefaultConfig()
+            .automaticReconnect()
+                .initialDelay(1, TimeUnit.SECONDS)
+                .maxDelay(10, TimeUnit.SECONDS)
+                .applyAutomaticReconnect()
 
         if (useTls) builder = builder.sslWithDefaultConfig()
 
         val asyncClient = builder
+            .addConnectedListener {
+                MqttLogger.log("Mqtt v3 Connected (Auto-reconnect)", "SUCCESS")
+                _connectionStatus.value = MqttConnectionStatus.CONNECTED
+                // Re-subscribe to pending topics on auto-reconnect
+                val subs = synchronized(pendingSubscriptions) { pendingSubscriptions.toList() }
+                subs.forEach { subscribe(appContext, it) }
+            }
             .addDisconnectedListener { 
                 val reason = it.cause?.message ?: "Normal Closure"
                 MqttLogger.log("Disconnected (v3): $reason", "ERROR")
@@ -214,7 +239,7 @@ class MqttManager {
             
             // Re-subscribe to pending topics
             val subs = synchronized(pendingSubscriptions) { pendingSubscriptions.toList() }
-            subs.forEach { subscribe(context, it) }
+            subs.forEach { subscribe(appContext, it) }
 
             it
         }
@@ -233,28 +258,33 @@ class MqttManager {
             return CompletableFuture.completedFuture(null)
         }
 
-        return when (currentVersion) {
-            5 -> client5?.subscribeWith()
-                ?.topicFilter(topic)
-                ?.callback { publish ->
-                    scope.launch {
-                        SyncManager.getInstance(context).onRawMessageReceived(
-                            publish.topic.toString(), publish.payloadAsBytes
-                        )
+        return try {
+            when (currentVersion) {
+                5 -> client5?.subscribeWith()
+                    ?.topicFilter(topic)
+                    ?.callback { publish ->
+                        scope.launch {
+                            SyncManager.getInstance(context).onRawMessageReceived(
+                                publish.topic.toString(), publish.payloadAsBytes
+                            )
+                        }
                     }
-                }
-                ?.send()?.thenAccept { MqttLogger.log("Subscribed (v5) to $topic", "SUCCESS") }
-            else -> client3?.subscribeWith()
-                ?.topicFilter(topic)
-                ?.callback { publish ->
-                    scope.launch {
-                        SyncManager.getInstance(context).onRawMessageReceived(
-                            publish.topic.toString(), publish.payloadAsBytes
-                        )
+                    ?.send()?.thenAccept { MqttLogger.log("Subscribed (v5) to $topic", "SUCCESS") }
+                else -> client3?.subscribeWith()
+                    ?.topicFilter(topic)
+                    ?.callback { publish ->
+                        scope.launch {
+                            SyncManager.getInstance(context).onRawMessageReceived(
+                                publish.topic.toString(), publish.payloadAsBytes
+                            )
+                        }
                     }
-                }
-                ?.send()?.thenAccept { MqttLogger.log("Subscribed (v3) to $topic", "SUCCESS") }
-        } ?: CompletableFuture.completedFuture(null)
+                    ?.send()?.thenAccept { MqttLogger.log("Subscribed (v3) to $topic", "SUCCESS") }
+            } ?: CompletableFuture.completedFuture(null)
+        } catch (e: Exception) {
+            MqttLogger.log("Subscribe error: ${e.message}", "ERROR")
+            CompletableFuture.completedFuture(null)
+        }
     }
 
     fun unsubscribe(topic: String): CompletableFuture<Void> {
@@ -267,46 +297,63 @@ class MqttManager {
             return CompletableFuture.completedFuture(null)
         }
 
-        return if (currentVersion == 5) {
-            client5?.unsubscribeWith()?.topicFilter(topic)?.send()?.thenAccept { } ?: CompletableFuture.completedFuture(null)
-        } else {
-            client3?.unsubscribeWith()?.topicFilter(topic)?.send()?.thenAccept { } ?: CompletableFuture.completedFuture(null)
+        return try {
+            if (currentVersion == 5) {
+                client5?.unsubscribeWith()?.topicFilter(topic)?.send()?.thenAccept { } ?: CompletableFuture.completedFuture(null)
+            } else {
+                client3?.unsubscribeWith()?.topicFilter(topic)?.send()?.thenAccept { } ?: CompletableFuture.completedFuture(null)
+            }
+        } catch (e: Exception) {
+            MqttLogger.log("Unsubscribe error: ${e.message}", "ERROR")
+            CompletableFuture.completedFuture(null)
         }
     }
 
     fun publish(topic: String, payload: ByteArray): CompletableFuture<*> {
         val client = if (currentVersion == 5) client5 else client3
-        if (client == null) {
-            val future = CompletableFuture<Any>()
-            future.completeExceptionally(Exception("Client not connected"))
-            return future
+        if (client == null || !client.state.isConnected) {
+            MqttLogger.log("Publish dropped: $topic (not connected)", "TRACE")
+            return CompletableFuture.completedFuture(null)
         }
-        return if (currentVersion == 5) {
-            client5?.publishWith()?.topic(topic)?.payload(payload)?.send() ?: failedFuture<Any>(Exception("v5 client null"))
-        } else {
-            client3?.publishWith()?.topic(topic)?.payload(payload)?.send() ?: failedFuture<Any>(Exception("v3 client null"))
+        return try {
+            if (currentVersion == 5) {
+                client5?.publishWith()?.topic(topic)?.payload(payload)?.send() ?: CompletableFuture.completedFuture(null)
+            } else {
+                client3?.publishWith()?.topic(topic)?.payload(payload)?.send() ?: CompletableFuture.completedFuture(null)
+            }
+        } catch (e: Exception) {
+            MqttLogger.log("Publish error: ${e.message}", "ERROR")
+            CompletableFuture.completedFuture(null)
         }
-    }
-
-    private fun <T> failedFuture(ex: Throwable): CompletableFuture<T> {
-        val f = CompletableFuture<T>()
-        f.completeExceptionally(ex)
-        return f
     }
 
     fun disconnect(): CompletableFuture<Void> {
-        return disconnectInternal()
+        return try {
+            disconnectInternal()
+        } catch (e: Exception) {
+            MqttLogger.log("Disconnect error: ${e.message}", "ERROR")
+            CompletableFuture.completedFuture(null)
+        }
     }
 
     private fun disconnectInternal(): CompletableFuture<Void> {
         synchronized(pendingSubscriptions) {
             pendingSubscriptions.clear()
         }
+        
         val f5 = client5?.disconnect() ?: CompletableFuture.completedFuture(null)
         val f3 = client3?.disconnect() ?: CompletableFuture.completedFuture(null)
+        
         client5 = null
         client3 = null
+
         return CompletableFuture.allOf(f5, f3).thenAccept { }
+    }
+
+    private fun <T> failedFuture(ex: Throwable): CompletableFuture<T> {
+        val f = CompletableFuture<T>()
+        f.completeExceptionally(ex)
+        return f
     }
 
     private suspend fun <T> CompletableFuture<T>.await(): T {

@@ -1,11 +1,14 @@
 package com.vigsync.core
 
+import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.BatteryManager
 import android.os.Build
+import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -193,6 +196,7 @@ class SyncManager private constructor(context: Context) {
 
     private var connectionJob: Job? = null
 
+    @SuppressLint("HardwareIds")
     fun start() {
         connectionJob?.cancel()
         connectionJob = scope.launch {
@@ -203,10 +207,14 @@ class SyncManager private constructor(context: Context) {
             val password = appPreferences.brokerPassword.first()
             val tls = appPreferences.useTls.first()
             
+            // Use stable Android ID as MQTT Client ID to avoid session conflicts
+            val androidId = Settings.Secure.getString(appContext?.contentResolver, Settings.Secure.ANDROID_ID) ?: "vigsync_client"
+            
             mqttManager.connect(
                 context = appContext!!,
                 brokerUrl = url, 
                 port = port,
+                clientId = "vigsync_$androidId",
                 useTls = tls,
                 username = username,
                 password = password
@@ -240,14 +248,28 @@ class SyncManager private constructor(context: Context) {
         if (msg.senderId == null) return
         
         scope.launch {
-            val entity = DeviceStatusEntity(
-                deviceId = msg.senderId,
-                name = msg.senderName ?: "Unknown Device",
-                batteryLevel = msg.batteryLevel ?: 0,
-                isOnline = true,
-                lastSeen = msg.timestamp
-            )
-            database.dao().updateDeviceStatus(entity)
+            val dao = database.dao()
+            val existing = dao.getDeviceStatus(msg.senderId)
+            
+            if (existing != null) {
+                // Partial update to preserve customLabel and pairingTimestamp
+                dao.updateHeartbeat(
+                    deviceId = msg.senderId,
+                    isOnline = true,
+                    lastSeen = msg.timestamp,
+                    batteryLevel = msg.batteryLevel ?: 0
+                )
+            } else {
+                // New device seen via MQTT (unlikely with explicit subs, but good for safety)
+                val entity = DeviceStatusEntity(
+                    deviceId = msg.senderId,
+                    name = msg.senderName ?: "Unknown Device",
+                    batteryLevel = msg.batteryLevel ?: 0,
+                    isOnline = true,
+                    lastSeen = msg.timestamp
+                )
+                dao.updateDeviceStatus(entity)
+            }
         }
     }
 
@@ -346,6 +368,10 @@ class SyncManager private constructor(context: Context) {
             )
             val json = Json.encodeToString(msg)
             mqttManager.publish(topic, json.toByteArray())
+                .exceptionally { e -> 
+                    MqttLogger.logApp("Heartbeat failed: ${e.message}", "TRACE")
+                    null 
+                }
         }
     }
 
@@ -404,6 +430,9 @@ class SyncManager private constructor(context: Context) {
             val json = Json.encodeToString(msg)
             mqttManager.publish(topic, json.toByteArray()).thenAccept {
                 MqttLogger.log("Sent $type event", "SENT")
+            }.exceptionally { e ->
+                MqttLogger.log("Send failed: ${e.message}", "ERROR")
+                null
             }
         }
     }
