@@ -162,6 +162,10 @@ class MqttManager {
             .identifier(clientId)
             .serverHost(url)
             .serverPort(port)
+            .simpleAuth()
+                .username(user ?: "")
+                .password(pass?.toByteArray() ?: ByteArray(0))
+                .applySimpleAuth()
             .automaticReconnect()
                 .initialDelay(1, TimeUnit.SECONDS)
                 .maxDelay(10, TimeUnit.SECONDS)
@@ -191,13 +195,7 @@ class MqttManager {
         val connectBuilder = asyncClient.connectWith()
             .cleanStart(false)
             .noSessionExpiry()
-
-        if (!user.isNullOrBlank()) {
-            connectBuilder.simpleAuth()
-                .username(user)
-                .password(pass?.toByteArray() ?: ByteArray(0))
-                .applySimpleAuth()
-        }
+            .keepAlive(30)
 
         return connectBuilder.send().thenApply {
             MqttLogger.log("Connected to v5 broker: $url", "INFO")
@@ -222,6 +220,10 @@ class MqttManager {
             .identifier(clientId)
             .serverHost(url)
             .serverPort(port)
+            .simpleAuth()
+                .username(user ?: "")
+                .password(pass?.toByteArray() ?: ByteArray(0))
+                .applySimpleAuth()
             .automaticReconnect()
                 .initialDelay(1, TimeUnit.SECONDS)
                 .maxDelay(10, TimeUnit.SECONDS)
@@ -250,13 +252,7 @@ class MqttManager {
 
         val connectBuilder = asyncClient.connectWith()
             .cleanSession(false)
-
-        if (!user.isNullOrBlank()) {
-            connectBuilder.simpleAuth()
-                .username(user)
-                .password(pass?.toByteArray() ?: ByteArray(0))
-                .applySimpleAuth()
-        }
+            .keepAlive(30)
 
         return connectBuilder.send().thenApply {
             MqttLogger.log("Connected to v3 broker: $url", "INFO")

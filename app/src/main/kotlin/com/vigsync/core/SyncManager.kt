@@ -99,9 +99,13 @@ class SyncManager private constructor(context: Context) {
         scope.launch {
             try {
                 val json = String(payload)
+                val msg = Json.decodeFromString<RawMessage>(json)
                 val raw = com.vigsync.data.local.RawMessage(topic = topic, payload = json)
                 database.dao().insertRaw(raw)
-                MqttLogger.log("Message received on $topic", "RECEIVED")
+                
+                val source = msg.senderName ?: "Unknown"
+                val type = if (topic.contains("/events/")) "event" else "status"
+                MqttLogger.log("Message from $source", "RECEIVED $source $type")
             } catch (e: Exception) {
                 MqttLogger.log("Failed to process message on $topic: ${e.message}", "ERROR")
             }
@@ -360,7 +364,7 @@ class SyncManager private constructor(context: Context) {
         scope.launch {
             while (isActive) {
                 sendHeartbeat()
-                delay(60000) // 1 minute
+                delay(30000) // 30 seconds
             }
         }
     }
@@ -376,11 +380,12 @@ class SyncManager private constructor(context: Context) {
                 timestamp = System.currentTimeMillis()
             )
             val json = Json.encodeToString(msg)
-            mqttManager.publish(topic, json.toByteArray())
-                .exceptionally { e -> 
-                    MqttLogger.logApp("Heartbeat failed: ${e.message}", "TRACE")
-                    null 
-                }
+            mqttManager.publish(topic, json.toByteArray()).thenAccept {
+                MqttLogger.log("Heartbeat sent", "SENT local status")
+            }.exceptionally { e -> 
+                MqttLogger.logApp("Heartbeat failed: ${e.message}", "TRACE")
+                null 
+            }
         }
     }
 
@@ -438,7 +443,7 @@ class SyncManager private constructor(context: Context) {
             )
             val json = Json.encodeToString(msg)
             mqttManager.publish(topic, json.toByteArray()).thenAccept {
-                MqttLogger.log("Sent $type event", "SENT")
+                MqttLogger.log("Sent $type event", "SENT local alert")
             }.exceptionally { e ->
                 MqttLogger.log("Send failed: ${e.message}", "ERROR")
                 null
