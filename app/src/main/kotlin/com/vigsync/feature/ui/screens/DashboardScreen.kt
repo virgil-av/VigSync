@@ -52,6 +52,7 @@ fun DashboardScreen(
     var showPairingDialog by remember { mutableStateOf<PairingTab?>(null) }
     var showDeleteConfirmation by remember { mutableStateOf<com.vigsync.data.local.DeviceStatusEntity?>(null) }
     var renamingDevice by remember { mutableStateOf<com.vigsync.data.local.DeviceStatusEntity?>(null) }
+    var showStopConfirmation by remember { mutableStateOf(false) }
     
     val context = androidx.compose.ui.platform.LocalContext.current
 
@@ -117,15 +118,32 @@ fun DashboardScreen(
                 }
             },
             onToggleSharing = {
-                if (!isSyncActive) {
-                    viewModel.updateSharingPreferences(localShareCalls, localShareSms, localShareNotifications)
-                    viewModel.toggleSync()
-                } else {
-                    viewModel.toggleSync()
-                }
+                viewModel.updateSharingPreferences(localShareCalls, localShareSms, localShareNotifications)
+                viewModel.toggleSync()
                 showSharingDialog = false
             },
             onDismiss = { showSharingDialog = false }
+        )
+    }
+
+    if (showStopConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showStopConfirmation = false },
+            title = { Text("Stop Synchronization?") },
+            text = { Text("This will pause event synchronization across your devices. You can restart it anytime.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.toggleSync()
+                    showStopConfirmation = false
+                }) {
+                    Text("Stop", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showStopConfirmation = false }) {
+                    Text("Keep Syncing")
+                }
+            }
         )
     }
 
@@ -206,10 +224,10 @@ fun DashboardScreen(
                 lastSeen = System.currentTimeMillis(),
                 onShareClick = { 
                     if (isSyncActive) {
-                        viewModel.toggleSync()
+                        showStopConfirmation = true
                     } else {
-                        localShareCalls = false
-                        localShareSms = false
+                        localShareCalls = shareCalls
+                        localShareSms = shareSms
                         // Check notification listener status accurately
                         val flat = android.provider.Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners")
                         localShareNotifications = flat?.contains(context.packageName) == true
@@ -372,50 +390,102 @@ fun SharingOptionsDialog(
     onToggleSharing: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    var showStopConfirmationInDialog by remember { mutableStateOf(false) }
+
+    if (showStopConfirmationInDialog) {
+        AlertDialog(
+            onDismissRequest = { showStopConfirmationInDialog = false },
+            title = { Text("Stop Synchronization?") },
+            text = { Text("This will pause event synchronization across your devices. You can restart it anytime.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onToggleSharing()
+                    showStopConfirmationInDialog = false
+                    onDismiss()
+                }) {
+                    Text("Stop", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showStopConfirmationInDialog = false }) {
+                    Text("Keep Syncing")
+                }
+            }
+        )
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Sync Configuration") },
         text = {
             Column {
                 Text(
-                    "Choose what you would like to share with your other devices. VigSync uses your private MQTT connection to transmit these events securely.",
+                    "Choose what you would like to share with your other devices.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(16.dp))
                 
-                SharingOptionItem(
-                    title = "Calls",
-                    description = "Sync incoming and outgoing call details so you can stay updated across all your devices.",
-                    permissionInfo = "Requires Call Log & Phone state access.",
-                    checked = calls,
-                    onCheckedChange = onCallsToggle
-                )
-                
-                Spacer(modifier = Modifier.height(20.dp))
-                
-                SharingOptionItem(
-                    title = "SMS",
-                    description = "Transmit text messages to your paired devices so you never miss an important message.",
-                    permissionInfo = "Requires SMS access.",
-                    checked = sms,
-                    onCheckedChange = onSmsToggle
-                )
-                
-                Spacer(modifier = Modifier.height(20.dp))
-                
-                SharingOptionItem(
-                    title = "App Alerts",
-                    description = "Sync notifications from other apps (like WhatsApp) across your devices.",
-                    permissionInfo = "Requires Special Notification Access.",
-                    checked = notifications,
-                    onCheckedChange = onNotificationsToggle
-                )
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "Sync settings",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        
+                        SharingOptionItem(
+                            title = "Calls",
+                            permissionInfo = "Requires Call Log & Phone state access.",
+                            checked = calls,
+                            onCheckedChange = onCallsToggle
+                        )
+                        
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 12.dp),
+                            thickness = 0.5.dp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f)
+                        )
+                        
+                        SharingOptionItem(
+                            title = "SMS",
+                            permissionInfo = "Requires SMS access.",
+                            checked = sms,
+                            onCheckedChange = onSmsToggle
+                        )
+                        
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 12.dp),
+                            thickness = 0.5.dp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f)
+                        )
+                        
+                        SharingOptionItem(
+                            title = "App Alerts",
+                            permissionInfo = "Requires Special Notification Access.",
+                            checked = notifications,
+                            onCheckedChange = onNotificationsToggle
+                        )
+                    }
+                }
             }
         },
         confirmButton = {
             Button(
-                onClick = onToggleSharing,
+                onClick = {
+                    if (isSharing) {
+                        showStopConfirmationInDialog = true
+                    } else {
+                        onToggleSharing()
+                    }
+                },
                 enabled = isSharing || calls || sms || notifications,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (isSharing) Color(0xFFFF9800) else Color(0xFF4CAF50)
@@ -436,14 +506,13 @@ fun SharingOptionsDialog(
 @Composable
 fun SharingOptionItem(
     title: String,
-    description: String,
     permissionInfo: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.Top
+        verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -451,12 +520,6 @@ fun SharingOptionItem(
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
-            Text(
-                text = description,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = permissionInfo,
                 style = MaterialTheme.typography.labelSmall,
