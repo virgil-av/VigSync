@@ -1,8 +1,10 @@
 package com.vigsync.core
 
 import android.annotation.SuppressLint
+import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -15,6 +17,7 @@ import androidx.core.app.NotificationManagerCompat
 import com.vigsync.R
 import com.vigsync.core.models.Device
 import com.vigsync.core.models.RawMessage
+import com.vigsync.core.mqtt.HeartbeatReceiver
 import com.vigsync.core.mqtt.MqttLogger
 import com.vigsync.core.mqtt.MqttManager
 import com.vigsync.data.local.DeviceStatusEntity
@@ -38,6 +41,8 @@ class SyncManager private constructor(context: Context) {
 
     val SYNC_CHANNEL_ID = "vigsync_notifications"
     val SYNC_NOTIF_ID = 1001
+    private val HEARTBEAT_INTERVAL_MS = 15 * 60 * 1000L // 15 minutes
+    private val HEARTBEAT_REQUEST_CODE = 2001
 
     data class BufferedEvent(
         val type: String,
@@ -78,7 +83,6 @@ class SyncManager private constructor(context: Context) {
                     appPreferences.migrateIfNeeded()
 
                     loadPairedDevices()
-                    startHeartbeat()
                     startEventDrivenWorker()
                     
                     // Auto-start MQTT re-enabled after hardening MqttManager status flow
@@ -208,6 +212,8 @@ class SyncManager private constructor(context: Context) {
         connectionJob?.cancel()
         connectionJob = scope.launch {
             val url = appPreferences.brokerUrl.first()
+            if (url.isEmpty()) return@launch
+
             val port = appPreferences.brokerPort.first().toInt()
             val prefix = appPreferences.topicPrefix.first() ?: "vigsync/default"
             val username = appPreferences.brokerUsername.first()
@@ -238,6 +244,18 @@ class SyncManager private constructor(context: Context) {
             }
             
             MqttLogger.logApp("SyncManager: Connected and subscribed to ${_pairedDevicesList.value.size} devices", "INFO")
+            
+            // Start the alarm-based heartbeat loop
+            scheduleNextHeartbeat()
+        }
+    }
+
+    fun handleNetworkChange() {
+        scope.launch {
+            if (appPreferences.brokerUrl.first().isNotEmpty()) {
+                MqttLogger.logApp("Network Change: Re-initiating connection", "INFO")
+                start()
+            }
         }
     }
 
@@ -361,13 +379,39 @@ class SyncManager private constructor(context: Context) {
         MqttLogger.log("Remote Error ($deviceId): $error", "ERROR")
     }
 
-    fun startHeartbeat() {
-        scope.launch {
-            while (isActive) {
-                sendHeartbeat()
-                delay(30000) // 30 seconds
+    fun scheduleNextHeartbeat() {
+        val alarmManager = appContext?.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        val intent = Intent(appContext, HeartbeatReceiver::class.java)
+        val pendingIntent = PendingIntent.getBroadcast(
+            appContext, HEARTBEAT_REQUEST_CODE, intent, 
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val triggerAt = System.currentTimeMillis() + HEARTBEAT_INTERVAL_MS
+        
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
+                MqttLogger.logApp("AlarmManager: Exact alarms not allowed, falling back to setAndAllowWhileIdle", "WARNING")
+                alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
+            } else {
+                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
             }
+        } catch (e: SecurityException) {
+            MqttLogger.logApp("AlarmManager: SecurityException scheduling heartbeat: ${e.message}", "ERROR")
+            // Fallback for unexpected security issues
+            alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
         }
+    }
+
+    fun cancelHeartbeat() {
+        val alarmManager = appContext?.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        val intent = Intent(appContext, HeartbeatReceiver::class.java)
+        val pendingIntent = PendingIntent.getBroadcast(
+            appContext, HEARTBEAT_REQUEST_CODE, intent, 
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        alarmManager.cancel(pendingIntent)
+        MqttLogger.logApp("AlarmManager: Heartbeat loop cancelled", "TRACE")
     }
 
     fun sendHeartbeat() {
