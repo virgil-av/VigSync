@@ -34,6 +34,7 @@ fun EventsScreen(
     val selectedDevice by viewModel.selectedDevice.collectAsState()
     
     var expanded by remember { mutableStateOf(false) }
+    var clearMenuExpanded by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -78,8 +79,36 @@ fun EventsScreen(
                         }
                     }
 
-                    IconButton(onClick = { viewModel.clearEvents() }) {
-                        Icon(Icons.Default.DeleteSweep, contentDescription = "Clear All")
+                    Box {
+                        IconButton(onClick = { clearMenuExpanded = true }) {
+                            Icon(Icons.Default.DeleteSweep, contentDescription = "Clear Options")
+                        }
+                        DropdownMenu(
+                            expanded = clearMenuExpanded,
+                            onDismissRequest = { clearMenuExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Clear All Events") },
+                                onClick = {
+                                    viewModel.clearEvents()
+                                    clearMenuExpanded = false
+                                },
+                                leadingIcon = { Icon(Icons.Default.DeleteForever, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                            )
+                            if (devices.isNotEmpty()) {
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                                devices.forEach { device ->
+                                    DropdownMenuItem(
+                                        text = { Text("Clear $device") },
+                                        onClick = {
+                                            viewModel.clearEventsForDevice(device)
+                                            clearMenuExpanded = false
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             )

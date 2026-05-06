@@ -59,6 +59,9 @@ interface VigSyncDao {
     @Query("DELETE FROM events")
     suspend fun clearAllEvents()
 
+    @Query("DELETE FROM events WHERE sourceDevice = :deviceName")
+    suspend fun clearEventsForDevice(deviceName: String)
+
     @Query("SELECT version FROM host_protocols WHERE host = :host")
     suspend fun getProtocolForHost(host: String): Int?
 

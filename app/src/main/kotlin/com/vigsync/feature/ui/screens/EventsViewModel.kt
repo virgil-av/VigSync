@@ -46,4 +46,10 @@ class EventsViewModel(
             MqttLogger.clear()
         }
     }
+
+    fun clearEventsForDevice(deviceName: String) {
+        viewModelScope.launch {
+            database.dao().clearEventsForDevice(deviceName)
+        }
+    }
 }

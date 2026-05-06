@@ -25,7 +25,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
-enum class SettingsSection { MQTT, PERMISSIONS, SYNC_ALERTS, DEBUG }
+enum class SettingsSection { MQTT, PERMISSIONS, PUSH_NOTIFICATIONS, DETECTED_APPS, DEBUG }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -58,12 +58,19 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                 icon = Icons.Default.Security,
                 onClick = { activeDialog = SettingsSection.PERMISSIONS }
             )
+
+            SettingsMenuItem(
+                title = "Push Notifications",
+                subtitle = "Local alerts for incoming synced events",
+                icon = Icons.Default.NotificationsActive,
+                onClick = { activeDialog = SettingsSection.PUSH_NOTIFICATIONS }
+            )
             
             SettingsMenuItem(
-                title = "Sync & Notifications",
-                subtitle = "Alert settings and discovered apps",
-                icon = Icons.Default.Notifications,
-                onClick = { activeDialog = SettingsSection.SYNC_ALERTS }
+                title = "Detected Apps",
+                subtitle = "Manage sync sources for discovered apps",
+                icon = Icons.Default.Apps,
+                onClick = { activeDialog = SettingsSection.DETECTED_APPS }
             )
 
             SettingsMenuItem(
@@ -145,7 +152,8 @@ fun SettingsDialog(
                             Text(when(section) {
                                 SettingsSection.MQTT -> "MQTT Configuration"
                                 SettingsSection.PERMISSIONS -> "System Permissions"
-                                SettingsSection.SYNC_ALERTS -> "Sync & Notifications"
+                                SettingsSection.PUSH_NOTIFICATIONS -> "Push Notifications"
+                                SettingsSection.DETECTED_APPS -> "Detected Apps"
                                 SettingsSection.DEBUG -> "Diagnostics"
                             })
                         },
@@ -168,7 +176,8 @@ fun SettingsDialog(
                     when (section) {
                         SettingsSection.MQTT -> MqttSettingsTab(viewModel)
                         SettingsSection.PERMISSIONS -> PermissionsSettingsTab()
-                        SettingsSection.SYNC_ALERTS -> SyncAlertsTab(viewModel)
+                        SettingsSection.PUSH_NOTIFICATIONS -> PushNotificationsTab(viewModel)
+                        SettingsSection.DETECTED_APPS -> DetectedAppsTab(viewModel)
                         SettingsSection.DEBUG -> DebugScreenContent(debugViewModel)
                     }
                 }
@@ -317,6 +326,12 @@ fun PermissionsSettingsTab() {
         PermissionItem("Phone Status", hasPhone) {
             permissionLauncher.launch(android.Manifest.permission.READ_PHONE_STATE)
         }
+        PermissionItem("Notification Listener", hasListener) {
+            val intent = android.content.Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply {
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        }
         PermissionItem("Camera (QR Scanning)", hasCamera) {
             permissionLauncher.launch(android.Manifest.permission.CAMERA)
         }
@@ -353,7 +368,8 @@ fun PermissionsSettingsTab() {
                             }
                             context.startActivity(intent)
                         },
-                        modifier = Modifier.padding(top = 8.dp)
+                        modifier = Modifier.padding(top = 8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = androidx.compose.ui.graphics.Color(0xFF4CAF50))
                     ) {
                         Text("Open App Info to set Unrestricted")
                     }
@@ -366,55 +382,14 @@ fun PermissionsSettingsTab() {
                 }
             }
         }
-
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = if (hasListener) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer
-            )
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        if (hasListener) Icons.Default.CheckCircle else Icons.Default.Error,
-                        contentDescription = null,
-                        tint = if (hasListener) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Notification Listener", style = MaterialTheme.typography.titleMedium)
-                }
-                Text(
-                    "Required to capture WhatsApp/Telegram/Email messages.",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
-                if (!hasListener) {
-                    Button(
-                        onClick = {
-                            val intent = android.content.Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply {
-                                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                            }
-                            context.startActivity(intent)
-                        },
-                        modifier = Modifier.padding(top = 8.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                    ) {
-                        Text("Grant Access")
-                    }
-                }
-            }
-        }
     }
 }
 
 @Composable
-fun SyncAlertsTab(viewModel: SettingsViewModel) {
+fun PushNotificationsTab(viewModel: SettingsViewModel) {
     val calls by viewModel.notifCalls.collectAsState()
     val sms by viewModel.notifSms.collectAsState()
     val other by viewModel.notifOther.collectAsState()
-    val discoveredApps by viewModel.discoveredApps.collectAsState()
 
     Column(
         modifier = Modifier
@@ -425,9 +400,9 @@ fun SyncAlertsTab(viewModel: SettingsViewModel) {
     ) {
         Text("Local Notifications", style = MaterialTheme.typography.titleLarge)
         Text(
-            "Receive alerts on this device when events are synced from your paired devices.",
+            "These settings control the notifications you receive on this device when events are synced from your other paired devices. It does not affect what this device shares with others.",
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.outline
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
         HorizontalDivider()
@@ -450,19 +425,43 @@ fun SyncAlertsTab(viewModel: SettingsViewModel) {
             onClick = { viewModel.updateNotifSettings(calls, sms, !other) }
         )
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Button(
+            onClick = { viewModel.sendTestNotification() },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Send Test Notification")
+        }
+    }
+}
+
+@Composable
+fun DetectedAppsTab(viewModel: SettingsViewModel) {
+    val discoveredApps by viewModel.discoveredApps.collectAsState()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
         Text("Sync Sources (Discovered Apps)", style = MaterialTheme.typography.titleLarge)
         Text(
-            "Apps that have triggered a notification are listed here. You can selectively disable their synchronization.",
+            "Apps that have triggered a notification on this device are listed here. You can selectively disable their synchronization to other devices.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.outline
         )
         
         if (discoveredApps.isEmpty()) {
-            Text("No apps discovered yet. They will appear here once they send a notification.", 
-                style = MaterialTheme.typography.bodySmall, 
-                modifier = Modifier.padding(vertical = 16.dp),
-                color = MaterialTheme.colorScheme.primary)
+            Box(modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.outlineVariant)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("No apps discovered yet", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                }
+            }
         }
 
         discoveredApps.forEach { app ->
@@ -493,15 +492,6 @@ fun SyncAlertsTab(viewModel: SettingsViewModel) {
                     onCheckedChange = { viewModel.toggleAppSync(app.packageName, it) }
                 )
             }
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Button(
-            onClick = { viewModel.sendTestNotification() },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Send Test Notification")
         }
     }
 }
