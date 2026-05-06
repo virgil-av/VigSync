@@ -27,20 +27,13 @@ import java.util.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EventsScreen(
-    viewModel: EventsViewModel = viewModel(),
-    deviceName: String? = null
+    viewModel: EventsViewModel = viewModel()
 ) {
     val events by viewModel.events.collectAsState()
     val devices by viewModel.devices.collectAsState()
     val selectedDevice by viewModel.selectedDevice.collectAsState()
     
     var expanded by remember { mutableStateOf(false) }
-
-    LaunchedEffect(deviceName) {
-        if (deviceName != null) {
-            viewModel.setSelectedDevice(deviceName)
-        }
-    }
 
     Scaffold(
         topBar = {

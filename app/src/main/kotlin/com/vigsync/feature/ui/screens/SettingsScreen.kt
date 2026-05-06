@@ -22,33 +22,157 @@ import androidx.compose.foundation.clickable
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+
+enum class SettingsSection { MQTT, PERMISSIONS, SYNC_ALERTS }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
-    var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("MQTT", "Permissions", "Sync Alerts")
+    var activeDialog by remember { mutableStateOf<SettingsSection?>(null) }
 
     Scaffold(
         topBar = {
             TopAppBar(title = { Text("Settings") })
         }
     ) { innerPadding ->
-        Column(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
-            TabRow(selectedTabIndex = selectedTab) {
-                tabs.forEachIndexed { index, title ->
-                    Tab(
-                        selected = selectedTab == index,
-                        onClick = { selectedTab = index },
-                        text = { Text(title) }
+        Column(
+            modifier = Modifier
+                .padding(innerPadding)
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+        ) {
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            SettingsMenuItem(
+                title = "MQTT Configuration",
+                subtitle = "Broker URL, credentials, and TLS",
+                icon = Icons.Default.Cloud,
+                onClick = { activeDialog = SettingsSection.MQTT }
+            )
+            
+            SettingsMenuItem(
+                title = "System Permissions",
+                subtitle = "SMS, Calls, and Background access",
+                icon = Icons.Default.Security,
+                onClick = { activeDialog = SettingsSection.PERMISSIONS }
+            )
+            
+            SettingsMenuItem(
+                title = "Sync & Notifications",
+                subtitle = "Alert settings and discovered apps",
+                icon = Icons.Default.Notifications,
+                onClick = { activeDialog = SettingsSection.SYNC_ALERTS }
+            )
+        }
+    }
+
+    if (activeDialog != null) {
+        SettingsDialog(
+            section = activeDialog!!,
+            viewModel = viewModel,
+            onDismiss = { activeDialog = null }
+        )
+    }
+}
+
+@Composable
+fun SettingsMenuItem(
+    title: String,
+    subtitle: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .padding(horizontal = 16.dp, vertical = 20.dp)
+                .fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(28.dp)
+            )
+            Spacer(modifier = Modifier.width(20.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = title, style = MaterialTheme.typography.titleMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                Text(text = subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+            }
+            Icon(
+                imageVector = Icons.Default.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.outlineVariant
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsDialog(
+    section: SettingsSection,
+    viewModel: SettingsViewModel,
+    onDismiss: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            Scaffold(
+                topBar = {
+                    TopAppBar(
+                        title = { 
+                            Text(when(section) {
+                                SettingsSection.MQTT -> "MQTT Configuration"
+                                SettingsSection.PERMISSIONS -> "System Permissions"
+                                SettingsSection.SYNC_ALERTS -> "Sync & Notifications"
+                            })
+                        },
+                        navigationIcon = {
+                            IconButton(onClick = onDismiss) {
+                                Icon(Icons.Default.Close, contentDescription = "Close")
+                            }
+                        }
                     )
                 }
-            }
-
-            when (selectedTab) {
-                0 -> MqttSettingsTab(viewModel)
-                1 -> PermissionsSettingsTab()
-                2 -> SyncAlertsTab(viewModel)
+            ) { padding ->
+                Box(modifier = Modifier.padding(padding).fillMaxSize()) {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        Box(modifier = Modifier.weight(1f)) {
+                            when (section) {
+                                SettingsSection.MQTT -> MqttSettingsTab(viewModel)
+                                SettingsSection.PERMISSIONS -> PermissionsSettingsTab()
+                                SettingsSection.SYNC_ALERTS -> SyncAlertsTab(viewModel)
+                            }
+                        }
+                        
+                        Surface(
+                            tonalElevation = 2.dp,
+                            shadowElevation = 8.dp,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Button(
+                                onClick = onDismiss,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp)
+                            ) {
+                                Text("Close")
+                            }
+                        }
+                    }
+                }
             }
         }
     }

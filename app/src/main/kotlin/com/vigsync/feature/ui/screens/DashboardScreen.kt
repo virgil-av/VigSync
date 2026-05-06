@@ -272,7 +272,7 @@ fun DashboardScreen(
                                         saveState = true
                                     }
                                     launchSingleTop = true
-                                    restoreState = true
+                                    // Removed restoreState = true to ensure the device filter is always applied correctly
                                 }
                             }
                         }

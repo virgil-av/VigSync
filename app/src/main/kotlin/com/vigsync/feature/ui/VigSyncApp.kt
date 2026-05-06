@@ -69,8 +69,8 @@ fun VigSyncApp() {
                                 // reselecting the same item
                                 launchSingleTop = true
                                 // Restore state when reselecting a previously selected item
-                                // But ONLY if we're not trying to reset a filtered view
-                                if (!isSelected) {
+                                // But NOT for Events to ensure it resets to All Devices
+                                if (!isSelected && screen != Screen.Events) {
                                     restoreState = true
                                 }
                             }
@@ -91,9 +91,8 @@ fun VigSyncApp() {
                     nullable = true
                     defaultValue = null
                 })
-            ) { backStackEntry ->
-                val deviceName = backStackEntry.arguments?.getString("deviceName")
-                EventsScreen(deviceName = deviceName)
+            ) {
+                EventsScreen()
             }
             composable(Screen.Debug.route) { DebugScreen() }
             composable(Screen.Settings.route) { SettingsScreen() }

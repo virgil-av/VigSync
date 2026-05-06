@@ -1,19 +1,22 @@
 package com.vigsync.feature.ui.screens
 
-import androidx.lifecycle.ViewModel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.SavedStateHandle
 import com.vigsync.core.mqtt.MqttLogger
 import com.vigsync.data.local.VigSyncDatabase
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
-class EventsViewModel(application: Application) : AndroidViewModel(application) {
+class EventsViewModel(
+    application: Application,
+    private val savedStateHandle: SavedStateHandle
+) : AndroidViewModel(application) {
     private val database = VigSyncDatabase.getInstance(application)
 
-    private val _selectedDevice = MutableStateFlow<String?>(null)
-    val selectedDevice = _selectedDevice.asStateFlow()
+    // Reactive selection from Navigation SavedStateHandle
+    val selectedDevice: StateFlow<String?> = savedStateHandle.getStateFlow("deviceName", null)
 
     val devices = database.dao().getAllEvents()
         .map { events -> 
@@ -25,7 +28,7 @@ class EventsViewModel(application: Application) : AndroidViewModel(application) 
             initialValue = emptyList()
         )
 
-    val events = combine(database.dao().getAllEvents(), _selectedDevice) { allEvents, filter ->
+    val events = combine(database.dao().getAllEvents(), selectedDevice) { allEvents, filter ->
         if (filter == null) allEvents else allEvents.filter { it.sourceDevice == filter }
     }.stateIn(
         scope = viewModelScope,
@@ -34,7 +37,7 @@ class EventsViewModel(application: Application) : AndroidViewModel(application) 
     )
 
     fun setSelectedDevice(deviceName: String?) {
-        _selectedDevice.value = deviceName
+        savedStateHandle["deviceName"] = deviceName
     }
 
     fun clearEvents() {
