@@ -25,7 +25,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
-enum class SettingsSection { MQTT, PERMISSIONS, SYNC_ALERTS }
+enum class SettingsSection { MQTT, PERMISSIONS, SYNC_ALERTS, DEBUG }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -64,6 +64,13 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                 subtitle = "Alert settings and discovered apps",
                 icon = Icons.Default.Notifications,
                 onClick = { activeDialog = SettingsSection.SYNC_ALERTS }
+            )
+
+            SettingsMenuItem(
+                title = "MQTT Debugging",
+                subtitle = "Connection logs and storage diagnostics",
+                icon = Icons.Default.BugReport,
+                onClick = { activeDialog = SettingsSection.DEBUG }
             )
         }
     }
@@ -121,6 +128,8 @@ fun SettingsDialog(
     viewModel: SettingsViewModel,
     onDismiss: () -> Unit
 ) {
+    val debugViewModel: DebugViewModel = viewModel()
+    
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -137,40 +146,30 @@ fun SettingsDialog(
                                 SettingsSection.MQTT -> "MQTT Configuration"
                                 SettingsSection.PERMISSIONS -> "System Permissions"
                                 SettingsSection.SYNC_ALERTS -> "Sync & Notifications"
+                                SettingsSection.DEBUG -> "Diagnostics"
                             })
                         },
                         navigationIcon = {
                             IconButton(onClick = onDismiss) {
                                 Icon(Icons.Default.Close, contentDescription = "Close")
                             }
+                        },
+                        actions = {
+                            if (section == SettingsSection.DEBUG) {
+                                IconButton(onClick = { debugViewModel.clearLogs() }) {
+                                    Icon(Icons.Default.DeleteSweep, contentDescription = "Clear Logs")
+                                }
+                            }
                         }
                     )
                 }
             ) { padding ->
                 Box(modifier = Modifier.padding(padding).fillMaxSize()) {
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        Box(modifier = Modifier.weight(1f)) {
-                            when (section) {
-                                SettingsSection.MQTT -> MqttSettingsTab(viewModel)
-                                SettingsSection.PERMISSIONS -> PermissionsSettingsTab()
-                                SettingsSection.SYNC_ALERTS -> SyncAlertsTab(viewModel)
-                            }
-                        }
-                        
-                        Surface(
-                            tonalElevation = 2.dp,
-                            shadowElevation = 8.dp,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Button(
-                                onClick = onDismiss,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(16.dp)
-                            ) {
-                                Text("Close")
-                            }
-                        }
+                    when (section) {
+                        SettingsSection.MQTT -> MqttSettingsTab(viewModel)
+                        SettingsSection.PERMISSIONS -> PermissionsSettingsTab()
+                        SettingsSection.SYNC_ALERTS -> SyncAlertsTab(viewModel)
+                        SettingsSection.DEBUG -> DebugScreenContent(debugViewModel)
                     }
                 }
             }

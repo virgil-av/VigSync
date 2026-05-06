@@ -38,7 +38,7 @@ sealed class Screen(val route: String, val baseRoute: String, val label: String,
 fun VigSyncApp() {
     val navController = rememberNavController()
     // Pairing is now accessed from Dashboard top bar
-    val items = listOf(Screen.Dashboard, Screen.Events, Screen.Debug, Screen.Settings)
+    val items = listOf(Screen.Dashboard, Screen.Events, Screen.Settings)
 
     Scaffold(
         bottomBar = {

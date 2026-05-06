@@ -22,9 +22,6 @@ import java.util.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DebugScreen(viewModel: DebugViewModel = viewModel()) {
-    var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("MQTT", "App Logs", "Storage")
-
     Scaffold(
         topBar = {
             TopAppBar(
@@ -37,22 +34,32 @@ fun DebugScreen(viewModel: DebugViewModel = viewModel()) {
             )
         }
     ) { innerPadding ->
-        Column(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
-            TabRow(selectedTabIndex = selectedTab) {
-                tabs.forEachIndexed { index, title ->
-                    Tab(
-                        selected = selectedTab == index,
-                        onClick = { selectedTab = index },
-                        text = { Text(title) }
-                    )
-                }
-            }
+        Box(modifier = Modifier.padding(innerPadding)) {
+            DebugScreenContent(viewModel)
+        }
+    }
+}
 
-            when (selectedTab) {
-                0 -> LogList(viewModel.mqttLogs)
-                1 -> LogList(viewModel.appLogs)
-                2 -> StorageList(viewModel)
+@Composable
+fun DebugScreenContent(viewModel: DebugViewModel) {
+    var selectedTab by remember { mutableIntStateOf(0) }
+    val tabs = listOf("MQTT", "App Logs", "Storage")
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        TabRow(selectedTabIndex = selectedTab) {
+            tabs.forEachIndexed { index, title ->
+                Tab(
+                    selected = selectedTab == index,
+                    onClick = { selectedTab = index },
+                    text = { Text(title) }
+                )
             }
+        }
+
+        when (selectedTab) {
+            0 -> LogList(viewModel.mqttLogs)
+            1 -> LogList(viewModel.appLogs)
+            2 -> StorageList(viewModel)
         }
     }
 }
