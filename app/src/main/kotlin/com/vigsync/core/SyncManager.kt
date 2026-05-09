@@ -15,6 +15,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.vigsync.R
+import com.vigsync.core.crypto.EncryptionManager
 import com.vigsync.core.models.Device
 import com.vigsync.core.models.RawMessage
 import com.vigsync.core.mqtt.HeartbeatReceiver
@@ -337,7 +338,18 @@ class SyncManager private constructor(context: Context) {
 
     fun processIncomingEvent(msg: RawMessage) {
         scope.launch {
-            // Deduplication
+            // 1. Decrypt data if present
+            val sharedKey = appPreferences.sharedKey.first()
+            val decryptedData = if (!sharedKey.isNullOrEmpty() && !msg.data.isNullOrEmpty()) {
+                try {
+                    EncryptionManager(sharedKey).decrypt(msg.data) ?: msg.data
+                } catch (e: Exception) {
+                    MqttLogger.logApp("SyncManager: Decryption failed for ${msg.type}: ${e.message}", "ERROR")
+                    "[Encrypted Content]"
+                }
+            } else msg.data ?: ""
+
+            // 2. Deduplication using decrypted data for hash consistency (or original hash)
             val hash = msg.calculateHash()
             if (database.dao().countEventHash(hash) > 0) return@launch
 
@@ -345,7 +357,7 @@ class SyncManager private constructor(context: Context) {
 
             val event = EventEntity(
                 type = msg.type ?: "OTHER",
-                data = msg.data ?: "",
+                data = decryptedData,
                 timestamp = msg.timestamp,
                 syncStatus = if (isLocal) com.vigsync.core.models.SyncStatus.SENT else com.vigsync.core.models.SyncStatus.RECEIVED,
                 direction = if (isLocal) com.vigsync.core.models.EventDirection.LOCAL else com.vigsync.core.models.EventDirection.REMOTE,
@@ -365,7 +377,7 @@ class SyncManager private constructor(context: Context) {
                 if (shouldNotify) {
                     showSyncNotification(
                         title = "${msg.type} from ${msg.senderName}",
-                        message = msg.data ?: "",
+                        message = decryptedData,
                         deviceName = msg.senderName ?: "Unknown"
                     )
                 }
@@ -479,9 +491,26 @@ class SyncManager private constructor(context: Context) {
         scope.launch {
             val prefix = appPreferences.topicPrefix.first() ?: "vigsync/default"
             val topic = "$prefix/events/${getLocalDeviceId()}"
+            
+            // 1. Encrypt data before publishing
+            val sharedKey = appPreferences.sharedKey.first()
+            val encryptedData = if (!sharedKey.isNullOrEmpty()) {
+                val encrypted = EncryptionManager(sharedKey).encrypt(data)
+                if (encrypted != null) {
+                    MqttLogger.logApp("SyncManager: Encrypted $type payload successfully", "TRACE")
+                    encrypted
+                } else {
+                    MqttLogger.logApp("SyncManager: Encryption failed for $type, sending plain text", "WARNING")
+                    data
+                }
+            } else {
+                MqttLogger.logApp("SyncManager: No shared key available for encryption!", "WARNING")
+                data
+            }
+
             val msg = RawMessage(
                 type = type,
-                data = data,
+                data = encryptedData,
                 senderId = getLocalDeviceId(),
                 senderName = android.os.Build.MODEL,
                 timestamp = timestamp

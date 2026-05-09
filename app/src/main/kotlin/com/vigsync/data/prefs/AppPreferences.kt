@@ -42,6 +42,17 @@ class AppPreferences(private val context: Context) {
 
     suspend fun migrateIfNeeded() {
         context.dataStore.edit { prefs ->
+            // 1. Ensure shared key exists (Generate if new installation)
+            if (prefs[SHARED_KEY].isNullOrEmpty()) {
+                val newKey = com.vigsync.core.crypto.EncryptionManager.generateRandomKey()
+                prefs[SHARED_KEY] = newKey
+            }
+            
+            // 2. Ensure topic prefix exists
+            if (prefs[TOPIC_PREFIX].isNullOrEmpty()) {
+                prefs[TOPIC_PREFIX] = "vigsync/${java.util.UUID.randomUUID()}"
+            }
+
             if (prefs[booleanPreferencesKey(KEY_MIGRATED)] == true) return@edit
 
             try {
