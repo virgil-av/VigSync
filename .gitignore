@@ -23,4 +23,6 @@ documentation_and_planning/
 *.jks
 *.keystore
 google-services.json
-vigsync
+
+# Local specific binary/files
+/vigsync
