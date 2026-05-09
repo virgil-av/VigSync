@@ -21,11 +21,12 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val appPreferences = AppPreferences(application)
     private val packageManager = application.packageManager
 
-    val brokerUrl = appPreferences.brokerUrl.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), "broker.hivemq.com")
+    // Server Config Flows
+    val brokerUrl = appPreferences.brokerUrl.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), "")
     val brokerPort = appPreferences.brokerPort.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), "1883")
-    val brokerUsername = appPreferences.brokerUsername.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), "")
-    val brokerPassword = appPreferences.brokerPassword.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), "")
-    val useTls = appPreferences.useTls.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), false)
+    val brokerUser = appPreferences.brokerUser.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), "")
+    val brokerPass = appPreferences.brokerPass.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), "")
+    val topicPrefix = appPreferences.topicPrefix.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), "vigsync")
 
     val notifCalls = appPreferences.notifCalls.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), true)
     val notifSms = appPreferences.notifSms.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), true)
@@ -49,11 +50,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }.sortedBy { it.name }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    fun saveMqttConfig(url: String, port: String, user: String, pass: String, tls: Boolean) {
+    fun saveServerConfig(url: String, port: String, user: String, pass: String, prefix: String) {
         viewModelScope.launch {
-            appPreferences.saveBrokerConfig(url, port)
-            appPreferences.saveMqttAuth(user.ifBlank { null }, pass.ifBlank { null }, tls)
-            SyncManager.getInstance(getApplication()).restart()
+            appPreferences.saveServerConfig(url, port, user, pass, prefix)
+            SyncManager.getInstance(getApplication()).getServerConfigManager().generateConfigFile()
         }
     }
 
@@ -61,10 +61,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             appPreferences.saveNotifSettings(calls, sms, other)
         }
-    }
-
-    fun sendTestNotification() {
-        SyncManager.getInstance(getApplication()).sendTestNotification()
     }
 
     fun toggleAppSync(packageName: String, enabled: Boolean) {

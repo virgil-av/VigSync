@@ -6,7 +6,6 @@ import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import java.nio.ByteBuffer
-
 import java.nio.charset.StandardCharsets
 
 class EncryptionManager(private val sharedKey: String) {
@@ -16,6 +15,7 @@ class EncryptionManager(private val sharedKey: String) {
     private val ivLength = 12
 
     fun encrypt(plainText: String): String? {
+        if (sharedKey.isEmpty()) return plainText
         return try {
             val keyBytes = Base64.decode(sharedKey, Base64.NO_WRAP)
             val key = SecretKeySpec(keyBytes, "AES")
@@ -39,10 +39,11 @@ class EncryptionManager(private val sharedKey: String) {
     }
 
     fun decrypt(encryptedBase64: String): String? {
+        if (sharedKey.isEmpty()) return encryptedBase64
         return try {
             val combined = Base64.decode(encryptedBase64, Base64.NO_WRAP)
             if (combined.size <= ivLength) {
-                throw IllegalArgumentException("Payload too short (size=${combined.size}, expected > $ivLength)")
+                throw IllegalArgumentException("Payload too short")
             }
             
             val buffer = ByteBuffer.wrap(combined)
@@ -60,7 +61,6 @@ class EncryptionManager(private val sharedKey: String) {
             val decryptedBytes = cipher.doFinal(encryptedBytes)
             String(decryptedBytes, StandardCharsets.UTF_8)
         } catch (e: Exception) {
-            // Rethrowing so SyncManager can capture specific error message
             throw e
         }
     }

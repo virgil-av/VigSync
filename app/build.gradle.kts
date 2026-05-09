@@ -42,8 +42,6 @@ android {
             excludes += "META-INF/io.netty.versions.properties"
             excludes += "kotlin/**"
             excludes += "common.properties"
-            excludes += "barcode-scanning.properties"
-            excludes += "vision-common.properties"
             excludes += "image.properties"
             excludes += "firebase-annotations.properties"
             excludes += "transport-api.properties"
@@ -63,11 +61,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.navigation:navigation-compose:2.7.7")
 
-    // MQTT
-    implementation("com.hivemq:hivemq-mqtt-client:1.3.0")
-
-    // QR Code (Play Services version for 16KB alignment compatibility)
-    implementation("com.google.android.gms:play-services-mlkit-barcode-scanning:18.3.1")
+    // QR Code Generation
     implementation("com.google.zxing:core:3.5.3")
 
     // Room
@@ -75,11 +69,6 @@ dependencies {
     implementation("androidx.room:room-runtime:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
     ksp("androidx.room:room-compiler:$roomVersion")
-
-    // CameraX (for QR Scanning)
-    implementation("androidx.camera:camera-camera2:1.4.1")
-    implementation("androidx.camera:camera-lifecycle:1.4.1")
-    implementation("androidx.camera:camera-view:1.4.1")
 
     // DataStore
     implementation("androidx.datastore:datastore-preferences:1.0.0")

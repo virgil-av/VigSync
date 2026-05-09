@@ -1,8 +1,8 @@
 package com.vigsync
 
 import android.app.Application
+import android.util.Log
 import com.vigsync.core.SyncManager
-import com.vigsync.core.mqtt.MqttLogger
 
 class VigSyncApplication : Application() {
     
@@ -19,11 +19,10 @@ class VigSyncApplication : Application() {
         
         crashHandler = com.vigsync.core.GlobalCrashHandler(this)
         
-        MqttLogger.logApp("Application: onCreate() - Initializing strict singleton", "TRACE")
+        Log.d("VigSync", "Application: onCreate() - Initializing")
         crashHandler.checkAndLogLastCrash()
 
         syncManager = SyncManager.getInstance(this)
-        MqttLogger.logApp("Application: SyncManager hash: ${syncManager.hashCode()}", "TRACE")
     }
 
     companion object {

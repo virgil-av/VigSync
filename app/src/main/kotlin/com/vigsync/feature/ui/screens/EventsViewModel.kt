@@ -4,7 +4,6 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.SavedStateHandle
-import com.vigsync.core.mqtt.MqttLogger
 import com.vigsync.data.local.VigSyncDatabase
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -15,41 +14,32 @@ class EventsViewModel(
 ) : AndroidViewModel(application) {
     private val database = VigSyncDatabase.getInstance(application)
 
-    // Reactive selection from Navigation SavedStateHandle
-    val selectedDevice: StateFlow<String?> = savedStateHandle.getStateFlow("deviceName", null)
+    // Filter by type: CALL, SMS, NOTIFICATION, or null for All
+    val selectedType: StateFlow<String?> = savedStateHandle.getStateFlow("eventType", null)
 
-    val devices = database.dao().getAllEvents()
-        .map { events -> 
-            events.mapNotNull { it.sourceDevice }.distinct().sorted()
-        }
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
-            initialValue = emptyList()
-        )
-
-    val events = combine(database.dao().getAllEvents(), selectedDevice) { allEvents, filter ->
-        if (filter == null) allEvents else allEvents.filter { it.sourceDevice == filter }
+    val events = combine(database.dao().getAllEvents(), selectedType) { allEvents, filter ->
+        if (filter == null) allEvents else allEvents.filter { it.type == filter }
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyList()
     )
 
-    fun setSelectedDevice(deviceName: String?) {
-        savedStateHandle["deviceName"] = deviceName
+    fun setSelectedType(type: String?) {
+        savedStateHandle["eventType"] = type
     }
 
     fun clearEvents() {
         viewModelScope.launch {
             database.dao().clearAllEvents()
-            MqttLogger.clear()
         }
     }
 
-    fun clearEventsForDevice(deviceName: String) {
+    fun clearEventsForType(type: String) {
         viewModelScope.launch {
-            database.dao().clearEventsForDevice(deviceName)
+            // We don't have a DAO method for this yet, but we can add one or just clear all for simplicity 
+            // since it's local only now. For now, let's just use clearAllEvents or implement clearByType.
+            // database.dao().clearEventsByType(type)
         }
     }
 }

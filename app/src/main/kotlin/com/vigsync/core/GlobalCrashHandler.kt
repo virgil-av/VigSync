@@ -2,7 +2,6 @@ package com.vigsync.core
 
 import android.content.Context
 import android.util.Log
-import com.vigsync.core.mqtt.MqttLogger
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
@@ -52,9 +51,7 @@ class GlobalCrashHandler(private val context: Context) : Thread.UncaughtExceptio
     fun checkAndLogLastCrash() {
         if (crashFile.exists()) {
             val report = crashFile.readText()
-            MqttLogger.logApp("PREVIOUS CRASH DETECTED:\n$report", "ERROR")
-            // Optional: delete after reading so we don't log it every time
-            // crashFile.delete()
+            Log.e("VigSync", "PREVIOUS CRASH DETECTED:\n$report")
         }
     }
 }

@@ -30,8 +30,7 @@ fun EventsScreen(
     viewModel: EventsViewModel = viewModel()
 ) {
     val events by viewModel.events.collectAsState()
-    val devices by viewModel.devices.collectAsState()
-    val selectedDevice by viewModel.selectedDevice.collectAsState()
+    val selectedType by viewModel.selectedType.collectAsState()
     
     var expanded by remember { mutableStateOf(false) }
     var clearMenuExpanded by remember { mutableStateOf(false) }
@@ -44,14 +43,20 @@ fun EventsScreen(
                     Box(modifier = Modifier.padding(end = 8.dp)) {
                         TextButton(onClick = { expanded = true }) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
+                                val filterText = when (selectedType) {
+                                    "CALL" -> "Calls"
+                                    "SMS" -> "SMS"
+                                    "NOTIFICATION" -> "App Alerts"
+                                    else -> "All Events"
+                                }
                                 Text(
-                                    text = selectedDevice ?: "All Devices",
+                                    text = filterText,
                                     style = MaterialTheme.typography.labelLarge,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.widthIn(max = 120.dp)
                                 )
-                                Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                                Icon(Icons.Default.FilterList, contentDescription = null, modifier = Modifier.size(18.dp).padding(start = 4.dp))
                             }
                         }
                         DropdownMenu(
@@ -59,23 +64,37 @@ fun EventsScreen(
                             onDismissRequest = { expanded = false }
                         ) {
                             DropdownMenuItem(
-                                text = { Text("All Devices") },
+                                text = { Text("All Events") },
                                 onClick = {
-                                    viewModel.setSelectedDevice(null)
+                                    viewModel.setSelectedType(null)
                                     expanded = false
                                 },
-                                leadingIcon = { Icon(Icons.Default.Devices, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                                leadingIcon = { Icon(Icons.Default.AllInclusive, contentDescription = null, modifier = Modifier.size(18.dp)) }
                             )
-                            devices.forEach { device ->
-                                DropdownMenuItem(
-                                    text = { Text(device) },
-                                    onClick = {
-                                        viewModel.setSelectedDevice(device)
-                                        expanded = false
-                                    },
-                                    leadingIcon = { Icon(Icons.Default.PhoneAndroid, contentDescription = null, modifier = Modifier.size(18.dp)) }
-                                )
-                            }
+                            DropdownMenuItem(
+                                text = { Text("Calls") },
+                                onClick = {
+                                    viewModel.setSelectedType("CALL")
+                                    expanded = false
+                                },
+                                leadingIcon = { Icon(Icons.Default.Call, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("SMS") },
+                                onClick = {
+                                    viewModel.setSelectedType("SMS")
+                                    expanded = false
+                                },
+                                leadingIcon = { Icon(Icons.Default.Sms, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("App Alerts") },
+                                onClick = {
+                                    viewModel.setSelectedType("NOTIFICATION")
+                                    expanded = false
+                                },
+                                leadingIcon = { Icon(Icons.Default.Notifications, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                            )
                         }
                     }
 
@@ -95,19 +114,6 @@ fun EventsScreen(
                                 },
                                 leadingIcon = { Icon(Icons.Default.DeleteForever, contentDescription = null, modifier = Modifier.size(18.dp)) }
                             )
-                            if (devices.isNotEmpty()) {
-                                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                                devices.forEach { device ->
-                                    DropdownMenuItem(
-                                        text = { Text("Clear $device") },
-                                        onClick = {
-                                            viewModel.clearEventsForDevice(device)
-                                            clearMenuExpanded = false
-                                        },
-                                        leadingIcon = { Icon(Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp)) }
-                                    )
-                                }
-                            }
                         }
                     }
                 }
@@ -226,21 +232,6 @@ fun EventCard(event: EventEntity) {
                         )
                     }
                 }
-                
-                if (event.sourceDevice != null) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.secondaryContainer,
-                        shape = MaterialTheme.shapes.extraSmall
-                    ) {
-                        Text(
-                            text = event.sourceDevice,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer
-                        )
-                    }
-                }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -276,7 +267,7 @@ fun EventCard(event: EventEntity) {
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     val statusText = when (event.syncStatus) {
-                        SyncStatus.SENT -> "Sent"
+                        SyncStatus.SENT -> "Captured"
                         SyncStatus.RECEIVED -> "Synced"
                         SyncStatus.FAILED -> "Failed"
                         SyncStatus.PENDING -> "Pending"

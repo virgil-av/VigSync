@@ -10,11 +10,11 @@ local.properties
 
 # User-specific / Temporary
 temp/
-documentation_and_panning/
 artifacts/
 .artifacts/
 *.apk
 *.aab
+documentation_and_planning/
 
 # Kotlin
 .kotlin/
@@ -23,3 +23,4 @@ artifacts/
 *.jks
 *.keystore
 google-services.json
+vigsync

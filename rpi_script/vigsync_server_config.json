@@ -1,0 +1,10 @@
+{
+    "broker_url": "broker.hivemq.com",
+    "broker_port": 1883,
+    "username": "",
+    "password": "",
+    "device_topic": "vigsync/devices/ONEPLUS A5010_ca7e23bbc1c0d454",
+    "export_file_path": "/storage/emulated/0/Android/data/com.vigsync/files/Documents/vigsync_events.jsonl",
+    "device_id": "ONEPLUS A5010_ca7e23bbc1c0d454",
+    "device_name": "ONEPLUS A5010"
+}

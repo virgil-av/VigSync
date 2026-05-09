@@ -11,6 +11,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -25,7 +26,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
-enum class SettingsSection { MQTT, PERMISSIONS, PUSH_NOTIFICATIONS, DETECTED_APPS, DEBUG }
+enum class SettingsSection { SERVER_CONFIG, PERMISSIONS, MONITORING_CONTROLS, DETECTED_APPS }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -46,12 +47,12 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
             Spacer(modifier = Modifier.height(8.dp))
             
             SettingsMenuItem(
-                title = "MQTT Configuration",
-                subtitle = "Broker URL, credentials, and TLS",
-                icon = Icons.Default.Cloud,
-                onClick = { activeDialog = SettingsSection.MQTT }
+                title = "Server Configuration",
+                subtitle = "MQTT Broker and Topic settings for Raspberry Pi",
+                icon = Icons.Default.Dns,
+                onClick = { activeDialog = SettingsSection.SERVER_CONFIG }
             )
-            
+
             SettingsMenuItem(
                 title = "System Permissions",
                 subtitle = "SMS, Calls, and Background access",
@@ -60,24 +61,17 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
             )
 
             SettingsMenuItem(
-                title = "Push Notifications",
-                subtitle = "Local alerts for incoming synced events",
-                icon = Icons.Default.NotificationsActive,
-                onClick = { activeDialog = SettingsSection.PUSH_NOTIFICATIONS }
+                title = "Monitoring Controls",
+                subtitle = "Select which events to record locally",
+                icon = Icons.Default.SettingsSuggest,
+                onClick = { activeDialog = SettingsSection.MONITORING_CONTROLS }
             )
             
             SettingsMenuItem(
                 title = "Detected Apps",
-                subtitle = "Manage sync sources for discovered apps",
+                subtitle = "Manage monitoring for discovered apps",
                 icon = Icons.Default.Apps,
                 onClick = { activeDialog = SettingsSection.DETECTED_APPS }
-            )
-
-            SettingsMenuItem(
-                title = "MQTT Debugging",
-                subtitle = "Connection logs and storage diagnostics",
-                icon = Icons.Default.BugReport,
-                onClick = { activeDialog = SettingsSection.DEBUG }
             )
         }
     }
@@ -135,8 +129,6 @@ fun SettingsDialog(
     viewModel: SettingsViewModel,
     onDismiss: () -> Unit
 ) {
-    val debugViewModel: DebugViewModel = viewModel()
-    
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -150,23 +142,15 @@ fun SettingsDialog(
                     TopAppBar(
                         title = { 
                             Text(when(section) {
-                                SettingsSection.MQTT -> "MQTT Configuration"
+                                SettingsSection.SERVER_CONFIG -> "Server Configuration"
                                 SettingsSection.PERMISSIONS -> "System Permissions"
-                                SettingsSection.PUSH_NOTIFICATIONS -> "Push Notifications"
+                                SettingsSection.MONITORING_CONTROLS -> "Monitoring Controls"
                                 SettingsSection.DETECTED_APPS -> "Detected Apps"
-                                SettingsSection.DEBUG -> "Diagnostics"
                             })
                         },
                         navigationIcon = {
                             IconButton(onClick = onDismiss) {
                                 Icon(Icons.Default.Close, contentDescription = "Close")
-                            }
-                        },
-                        actions = {
-                            if (section == SettingsSection.DEBUG) {
-                                IconButton(onClick = { debugViewModel.clearLogs() }) {
-                                    Icon(Icons.Default.DeleteSweep, contentDescription = "Clear Logs")
-                                }
                             }
                         }
                     )
@@ -174,11 +158,10 @@ fun SettingsDialog(
             ) { padding ->
                 Box(modifier = Modifier.padding(padding).fillMaxSize()) {
                     when (section) {
-                        SettingsSection.MQTT -> MqttSettingsTab(viewModel)
+                        SettingsSection.SERVER_CONFIG -> ServerConfigTab(viewModel)
                         SettingsSection.PERMISSIONS -> PermissionsSettingsTab()
-                        SettingsSection.PUSH_NOTIFICATIONS -> PushNotificationsTab(viewModel)
+                        SettingsSection.MONITORING_CONTROLS -> MonitoringControlsTab(viewModel)
                         SettingsSection.DETECTED_APPS -> DetectedAppsTab(viewModel)
-                        SettingsSection.DEBUG -> DebugScreenContent(debugViewModel)
                     }
                 }
             }
@@ -187,73 +170,90 @@ fun SettingsDialog(
 }
 
 @Composable
-fun MqttSettingsTab(viewModel: SettingsViewModel) {
+fun ServerConfigTab(viewModel: SettingsViewModel) {
     val savedUrl by viewModel.brokerUrl.collectAsState()
     val savedPort by viewModel.brokerPort.collectAsState()
-    val savedUser by viewModel.brokerUsername.collectAsState()
-    val savedPass by viewModel.brokerPassword.collectAsState()
-    val savedTls by viewModel.useTls.collectAsState()
+    val savedUser by viewModel.brokerUser.collectAsState()
+    val savedPass by viewModel.brokerPass.collectAsState()
+    val savedPrefix by viewModel.topicPrefix.collectAsState()
 
     var url by remember(savedUrl) { mutableStateOf(savedUrl) }
     var port by remember(savedPort) { mutableStateOf(savedPort) }
-    var user by remember(savedUser) { mutableStateOf(savedUser ?: "") }
-    var pass by remember(savedPass) { mutableStateOf(savedPass ?: "") }
-    var tls by remember(savedTls) { mutableStateOf(savedTls) }
+    var user by remember(savedUser) { mutableStateOf(savedUser) }
+    var pass by remember(savedPass) { mutableStateOf(savedPass) }
+    var prefix by remember(savedPrefix) { mutableStateOf(savedPrefix) }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp)
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text("Broker Configuration", style = MaterialTheme.typography.titleLarge)
-        Spacer(modifier = Modifier.height(16.dp))
-
+        Text("MQTT Broker Settings", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        
         OutlinedTextField(
             value = url,
             onValueChange = { url = it },
-            label = { Text("Broker URL") },
-            modifier = Modifier.fillMaxWidth()
+            label = { Text("Broker URL (e.g. broker.hivemq.com)") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
         )
-        Spacer(modifier = Modifier.height(8.dp))
 
         OutlinedTextField(
             value = port,
             onValueChange = { port = it },
-            label = { Text("Port") },
-            modifier = Modifier.fillMaxWidth()
+            label = { Text("Broker Port (default 1883)") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
         )
-        Spacer(modifier = Modifier.height(8.dp))
 
         OutlinedTextField(
             value = user,
             onValueChange = { user = it },
             label = { Text("Username (Optional)") },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
         )
-        Spacer(modifier = Modifier.height(8.dp))
 
         OutlinedTextField(
             value = pass,
             onValueChange = { pass = it },
             label = { Text("Password (Optional)") },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
         )
-        Spacer(modifier = Modifier.height(16.dp))
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(checked = tls, onCheckedChange = { tls = it })
-            Text("Use SSL/TLS Encryption")
-        }
+        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+        Text("Topic Definition", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        
+        OutlinedTextField(
+            value = prefix,
+            onValueChange = { prefix = it },
+            label = { Text("Topic Prefix (e.g. vigsync)") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            supportingText = { Text("Final topic: $prefix/devices/[device_id]") }
+        )
 
         Spacer(modifier = Modifier.height(24.dp))
 
         Button(
-            onClick = { viewModel.saveMqttConfig(url, port, user, pass, tls) },
+            onClick = { viewModel.saveServerConfig(url, port, user, pass, prefix) },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Save MQTT Changes")
+            Icon(Icons.Default.Save, contentDescription = null)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Save & Generate Config File")
         }
+        
+        Text(
+            "This will create 'vigsync_server_config.json' in your Documents folder for the Raspberry Pi to consume.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.outline,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
     }
 }
 
@@ -265,7 +265,6 @@ fun PermissionsSettingsTab() {
     var hasSms by remember { mutableStateOf(false) }
     var hasCall by remember { mutableStateOf(false) }
     var hasPhone by remember { mutableStateOf(false) }
-    var hasCamera by remember { mutableStateOf(false) }
     var hasNotif by remember { mutableStateOf(false) }
     var hasListener by remember { mutableStateOf(false) }
     var isBatteryUnrestricted by remember { mutableStateOf(false) }
@@ -274,7 +273,6 @@ fun PermissionsSettingsTab() {
         hasSms = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_SMS) == android.content.pm.PackageManager.PERMISSION_GRANTED
         hasCall = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_CALL_LOG) == android.content.pm.PackageManager.PERMISSION_GRANTED
         hasPhone = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_PHONE_STATE) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        hasCamera = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED
         hasNotif = if (android.os.Build.VERSION.SDK_INT >= 33) {
             androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED
         } else true
@@ -286,7 +284,6 @@ fun PermissionsSettingsTab() {
         isBatteryUnrestricted = powerManager.isIgnoringBatteryOptimizations(context.packageName)
     }
 
-    // Lifecycle observer to refresh when returning to the app
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
@@ -332,9 +329,6 @@ fun PermissionsSettingsTab() {
             }
             context.startActivity(intent)
         }
-        PermissionItem("Camera (QR Scanning)", hasCamera) {
-            permissionLauncher.launch(android.Manifest.permission.CAMERA)
-        }
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             PermissionItem("Post Notifications", hasNotif) {
                 permissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
@@ -355,7 +349,7 @@ fun PermissionsSettingsTab() {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text("Battery Optimization", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "The app needs 'Unrestricted' battery access to maintain the MQTT connection and capture events while the screen is off.",
+                    "The app needs 'Unrestricted' battery access to maintain reliable monitoring while the screen is off.",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(top = 4.dp)
                 )
@@ -386,7 +380,7 @@ fun PermissionsSettingsTab() {
 }
 
 @Composable
-fun PushNotificationsTab(viewModel: SettingsViewModel) {
+fun MonitoringControlsTab(viewModel: SettingsViewModel) {
     val calls by viewModel.notifCalls.collectAsState()
     val sms by viewModel.notifSms.collectAsState()
     val other by viewModel.notifOther.collectAsState()
@@ -398,9 +392,9 @@ fun PushNotificationsTab(viewModel: SettingsViewModel) {
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text("Local Notifications", style = MaterialTheme.typography.titleLarge)
+        Text("Monitoring Controls", style = MaterialTheme.typography.titleLarge)
         Text(
-            "These settings control the notifications you receive on this device when events are synced from your other paired devices. It does not affect what this device shares with others.",
+            "Select which types of events should be recorded and stored locally on this phone.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -408,31 +402,22 @@ fun PushNotificationsTab(viewModel: SettingsViewModel) {
         HorizontalDivider()
 
         PermissionItem(
-            label = "Call Notifications",
+            label = "Record Calls",
             granted = calls,
             onClick = { viewModel.updateNotifSettings(!calls, sms, other) }
         )
 
         PermissionItem(
-            label = "SMS Notifications",
+            label = "Record SMS",
             granted = sms,
             onClick = { viewModel.updateNotifSettings(calls, !sms, other) }
         )
 
         PermissionItem(
-            label = "App Notifications",
+            label = "Record App Alerts",
             granted = other,
             onClick = { viewModel.updateNotifSettings(calls, sms, !other) }
         )
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Button(
-            onClick = { viewModel.sendTestNotification() },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Send Test Notification")
-        }
     }
 }
 
@@ -447,9 +432,9 @@ fun DetectedAppsTab(viewModel: SettingsViewModel) {
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text("Sync Sources (Discovered Apps)", style = MaterialTheme.typography.titleLarge)
+        Text("Monitored Apps", style = MaterialTheme.typography.titleLarge)
         Text(
-            "Apps that have triggered a notification on this device are listed here. You can selectively disable their synchronization to other devices.",
+            "Apps that have triggered a notification are listed here. You can selectively disable their monitoring.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.outline
         )
