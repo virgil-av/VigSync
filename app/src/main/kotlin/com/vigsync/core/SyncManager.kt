@@ -30,6 +30,9 @@ class SyncManager private constructor(context: Context) {
         var job: Job? = null
     )
 
+    private val eventDebounceCache = ConcurrentHashMap<String, Long>()
+    private val DEBOUNCE_WINDOW = 5000L // 5 seconds
+
     private val database: VigSyncDatabase by lazy { 
         VigSyncDatabase.getInstance(appContext!!) 
     }
@@ -80,6 +83,17 @@ class SyncManager private constructor(context: Context) {
     }
 
     fun publishEvent(type: String, data: String) {
+        val now = System.currentTimeMillis()
+        val eventKey = "${type}_$data"
+        
+        // 1. Global Debounce: Ignore identical events within 5 seconds
+        val lastSeen = eventDebounceCache[eventKey] ?: 0L
+        if (now - lastSeen < DEBOUNCE_WINDOW) {
+            Log.d("SyncManager", "Ignored duplicate $type event within window")
+            return
+        }
+        eventDebounceCache[eventKey] = now
+
         val eventId = "${type}_${data.hashCode()}"
         
         if (type == "CALL") {
