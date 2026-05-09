@@ -114,6 +114,7 @@ class VigNotificationListener : NotificationListenerService() {
             "com.android.phone", 
             "com.android.server.telecom", 
             "com.samsung.android.dialer",
+            "com.samsung.android.incallui",
             "com.whatsapp",
             "org.telegram.messenger"
         )

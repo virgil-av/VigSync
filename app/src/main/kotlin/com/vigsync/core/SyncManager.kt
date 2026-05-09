@@ -206,6 +206,8 @@ class SyncManager private constructor(context: Context) {
         return "${android.os.Build.MODEL}_$androidId"
     }
 
+    private val eventDebounceCache = ConcurrentHashMap<String, Long>()
+    private val DEBOUNCE_WINDOW = 5000L // 5 seconds
     private var connectionJob: Job? = null
 
     @SuppressLint("HardwareIds")
@@ -455,6 +457,17 @@ class SyncManager private constructor(context: Context) {
     }
 
     fun publishEvent(type: String, data: String) {
+        val now = System.currentTimeMillis()
+        val eventKey = "${type}_$data"
+        
+        // 1. Global Debounce: Ignore identical events within 5 seconds
+        val lastSeen = eventDebounceCache[eventKey] ?: 0L
+        if (now - lastSeen < DEBOUNCE_WINDOW) {
+            MqttLogger.logApp("SyncManager: Ignored duplicate $type event within window", "TRACE")
+            return
+        }
+        eventDebounceCache[eventKey] = now
+
         val eventId = "${type}_${data.hashCode()}"
         
         // Priority logic: Calls are high priority (send immediately)
