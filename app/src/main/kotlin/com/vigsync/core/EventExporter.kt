@@ -9,7 +9,7 @@ import com.vigsync.data.prefs.AppPreferences
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.*
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -33,30 +33,21 @@ class EventExporter(private val context: Context) {
 
     /**
      * Exports a message to the log file.
-     * Format: topic_suffix|encrypted_payload
+     * Format: topic_suffix|JSON_payload
      */
     fun exportMessage(topicSuffix: String, message: RawMessage) {
         val file = getExportFile()
         val rawJson = jsonLine.encodeToString(message)
         
-        // Encrypt the JSON line
-        val sharedKey = runBlocking { appPreferences.sharedKey.first() }
-        val encryptedData = if (!sharedKey.isNullOrEmpty()) {
-            EncryptionManager(sharedKey).encrypt(rawJson) ?: rawJson
-        } else {
-            Log.w("EventExporter", "No shared key found, exporting as plain text")
-            rawJson
-        }
-        
-        // Save as topic_suffix|encrypted_data
-        val lineToSave = "$topicSuffix|$encryptedData\n"
+        // Save as topic_suffix|raw_json
+        val lineToSave = "$topicSuffix|$rawJson\n"
         
         try {
             FileOutputStream(file, true).use { fos ->
                 fos.write(lineToSave.toByteArray())
                 fos.flush()
             }
-            Log.d("EventExporter", "Exported (Encrypted) to $topicSuffix: ${rawJson.take(50)}...")
+            Log.d("EventExporter", "Exported to $topicSuffix: ${rawJson.take(50)}...")
         } catch (e: IOException) {
             Log.e("EventExporter", "Failed to write to export file", e)
         }
@@ -74,6 +65,10 @@ class EventExporter(private val context: Context) {
         }
     }
 
+    /**
+     * Reads the file and returns a beautified version.
+     * If data is encrypted, it attempts to decrypt it for the inspector.
+     */
     fun readAndBeautify(): String {
         val file = getExportFile()
         if (!file.exists()) return "Log file does not exist."
@@ -89,11 +84,24 @@ class EventExporter(private val context: Context) {
                 if (line.isBlank() || !line.contains("|")) return@joinToString ""
                 val payload = line.substringAfter("|")
                 try {
-                    val decrypted = encryptionManager?.decrypt(payload) ?: payload
-                    val element = jsonLine.parseToJsonElement(decrypted)
-                    jsonPretty.encodeToString(element)
+                    val element = jsonLine.parseToJsonElement(payload).jsonObject
+                    
+                    // Attempt field-level decryption for the inspector
+                    val finalElement = if (element.containsKey("data") && encryptionManager != null) {
+                        val encryptedData = element["data"]?.jsonPrimitive?.content ?: ""
+                        try {
+                            val decrypted = encryptionManager.decrypt(encryptedData)
+                            if (decrypted != null) {
+                                val mutableMap = element.toMutableMap()
+                                mutableMap["data"] = JsonPrimitive(decrypted)
+                                JsonObject(mutableMap)
+                            } else element
+                        } catch (e: Exception) { element }
+                    } else element
+                    
+                    jsonPretty.encodeToString(finalElement)
                 } catch (e: Exception) {
-                    "// [Encrypted Data] or Failed to parse: $payload"
+                    "// Failed to parse line: $payload"
                 }
             }.trim()
         } catch (e: Exception) {

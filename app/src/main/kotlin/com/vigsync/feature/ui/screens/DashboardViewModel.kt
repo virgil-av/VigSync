@@ -129,18 +129,22 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun generateMyQr() {
         viewModelScope.launch {
-            val prefix = appPreferences.topicPrefix.first()
+            val brokerUrl = appPreferences.brokerUrl.first()
+            val port = appPreferences.brokerPort.first().toIntOrNull() ?: 1883
+            val sharedKey = appPreferences.sharedKey.first() ?: ""
+            val topicPrefix = appPreferences.topicPrefix.first()
             val deviceId = localDeviceId
             val deviceName = android.os.Build.MODEL
-            val sharedKey = appPreferences.sharedKey.first() ?: ""
             
-            // Old Schema for compatibility
+            // EXACT SCHEMA MATCH for legacy clients
             val pairingData = """
                 {
-                    "id": "$deviceId",
-                    "name": "$deviceName",
-                    "topicPrefix": "$prefix",
-                    "key": "$sharedKey"
+                    "brokerUrl": "$brokerUrl",
+                    "port": $port,
+                    "sharedKey": "$sharedKey",
+                    "topicPrefix": "$topicPrefix",
+                    "deviceName": "$deviceName",
+                    "deviceId": "$deviceId"
                 }
             """.trimIndent()
             

@@ -9,6 +9,5 @@ data class RawMessage(
     val senderId: String? = null,
     val senderName: String? = null,
     val batteryLevel: Int? = null,
-    val isCharging: Boolean? = null,
     val timestamp: Long = System.currentTimeMillis()
 )

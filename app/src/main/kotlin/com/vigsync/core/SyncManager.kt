@@ -2,10 +2,13 @@ package com.vigsync.core
 
 import android.content.Context
 import android.util.Log
+import com.vigsync.core.crypto.EncryptionManager
 import com.vigsync.core.models.RawMessage
 import com.vigsync.data.local.EventEntity
 import com.vigsync.data.local.VigSyncDatabase
+import com.vigsync.data.prefs.AppPreferences
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.first
 import java.util.concurrent.ConcurrentHashMap
 
 class SyncManager private constructor(context: Context) {
@@ -14,6 +17,7 @@ class SyncManager private constructor(context: Context) {
     private val eventExporter = EventExporter(context)
     private val serverConfigManager = ServerConfigManager(context)
     private val statusProvider = DeviceStatusProvider(context)
+    private val appPreferences = AppPreferences(context)
 
     private val eventBuffer = ConcurrentHashMap<String, BufferedEvent>()
     private val BUFFER_WINDOW = 5000L // 5 seconds
@@ -45,6 +49,7 @@ class SyncManager private constructor(context: Context) {
 
     init {
         Log.d("SyncManager", "Local SyncManager Initialized")
+        exportCurrentStatus() // Send initial status immediately
         startPeriodicStatusUpdates()
     }
 
@@ -52,7 +57,7 @@ class SyncManager private constructor(context: Context) {
         scope.launch {
             while (isActive) {
                 exportCurrentStatus()
-                delay(5 * 60 * 1000) // Every 5 minutes
+                delay(60 * 1000) // Every 1 minute for dev feedback
             }
         }
     }
@@ -63,7 +68,6 @@ class SyncManager private constructor(context: Context) {
                 senderId = getLocalDeviceId(),
                 senderName = android.os.Build.MODEL,
                 batteryLevel = statusProvider.getBatteryLevel(),
-                isCharging = statusProvider.isCharging(),
                 timestamp = System.currentTimeMillis()
             )
             eventExporter.exportMessage("status", msg)
@@ -114,18 +118,23 @@ class SyncManager private constructor(context: Context) {
             )
             database.dao().insertEvent(event)
             
+            // Targeted field-level encryption for legacy compatibility
+            val sharedKey = appPreferences.sharedKey.first()
+            val encryptedData = if (!sharedKey.isNullOrEmpty()) {
+                EncryptionManager(sharedKey).encrypt(data) ?: data
+            } else data
+            
             val msg = RawMessage(
                 type = type,
-                data = data,
+                data = encryptedData,
                 senderId = getLocalDeviceId(),
                 senderName = android.os.Build.MODEL,
                 timestamp = timestamp,
-                batteryLevel = statusProvider.getBatteryLevel(),
-                isCharging = statusProvider.isCharging()
+                batteryLevel = statusProvider.getBatteryLevel()
             )
             eventExporter.exportMessage("events", msg)
             
-            Log.d("SyncManager", "Event saved and exported: $type")
+            Log.d("SyncManager", "Event exported (Encrypted Data): $type")
         }
     }
 
