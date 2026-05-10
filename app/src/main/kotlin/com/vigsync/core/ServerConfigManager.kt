@@ -21,7 +21,8 @@ data class ServerConfig(
     val export_file_path: String,
     val device_id: String,
     val device_name: String,
-    val shared_key: String?
+    val shared_key: String?,
+    val use_tls: Boolean
 )
 
 class ServerConfigManager(private val context: Context) {
@@ -46,6 +47,7 @@ class ServerConfigManager(private val context: Context) {
         val deviceId = syncManager.getLocalDeviceId()
         val deviceName = android.os.Build.MODEL
         val sharedKey = appPreferences.sharedKey.first()
+        val useTls = appPreferences.useTls.first()
         
         val logFilePath = syncManager.getEventExporter().getExportFile().absolutePath
 
@@ -58,7 +60,8 @@ class ServerConfigManager(private val context: Context) {
             export_file_path = logFilePath,
             device_id = deviceId,
             device_name = deviceName,
-            shared_key = sharedKey
+            shared_key = sharedKey,
+            use_tls = useTls
         )
 
         val jsonString = json.encodeToString(config)

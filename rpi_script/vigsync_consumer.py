@@ -182,6 +182,14 @@ def run():
     if config.get("username") and config.get("password"):
         client.username_pw_set(config["username"], config["password"])
 
+    if config.get("use_tls", False):
+        try:
+            # Use system default CA certificates
+            client.tls_set()
+            log_mem("SSL/TLS Enabled for MQTT connection.")
+        except Exception as e:
+            log_mem(f"Failed to enable TLS: {e}", "ERROR")
+
     client.on_connect = on_connect
 
     try:
