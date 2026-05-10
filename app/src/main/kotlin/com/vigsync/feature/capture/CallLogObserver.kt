@@ -74,7 +74,7 @@ class CallLogObserver(
 
                         if (call.callType == "Missed") {
                             val simLabel = getSimLabel(call.subscriptionId)
-                            val enrichedData = "[$simLabel] From: ${call.number}"
+                            val enrichedData = "System Phone|com.android.server.telecom|[$simLabel] From: ${call.number}"
                             Log.d("VigSync", "System Missed Call Captured: $enrichedData")
                             SyncManager.getInstance(appContext).publishEvent("SYSTEM MISSED CALL", enrichedData)
                         }

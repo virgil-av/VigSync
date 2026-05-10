@@ -83,10 +83,10 @@ class VigNotificationListener : NotificationListenerService() {
 
             if (isMissed) {
                 eventType = "VOIP MISSED CALL"
-                eventData = "[$appLabel] From: $title"
+                eventData = "$appLabel|$packageName|From: $title"
             } else if (isCallCategory || text.contains("Ongoing call", ignoreCase = true)) {
                 eventType = "VOIP ACTIVE CALL"
-                eventData = "[$appLabel] Active Call: $title"
+                eventData = "$appLabel|$packageName|Active Call: $title"
             }
 
             Log.d("VigSync", "Event Captured ($eventType) from $packageName: $title")

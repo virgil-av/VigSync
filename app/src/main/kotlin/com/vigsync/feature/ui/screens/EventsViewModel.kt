@@ -14,16 +14,38 @@ class EventsViewModel(
 ) : AndroidViewModel(application) {
     private val database = VigSyncDatabase.getInstance(application)
 
-    // Filter by type: CALL, SMS, NOTIFICATION, or null for All
+    // Reactive selection from Navigation SavedStateHandle
+    val selectedDevice: StateFlow<String?> = savedStateHandle.getStateFlow("deviceName", null)
     val selectedType: StateFlow<String?> = savedStateHandle.getStateFlow("eventType", null)
 
-    val events = combine(database.dao().getAllEvents(), selectedType) { allEvents, filter ->
-        if (filter == null) allEvents else allEvents.filter { it.type == filter }
+    val devices = database.dao().getAllEvents()
+        .map { events -> 
+            events.mapNotNull { it.sourceDevice }.distinct().sorted()
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    val events = combine(database.dao().getAllEvents(), selectedDevice, selectedType) { allEvents, deviceFilter, typeFilter ->
+        allEvents.filter { event ->
+            val matchesDevice = deviceFilter == null || event.sourceDevice == deviceFilter
+            val matchesType = typeFilter == null || when(typeFilter) {
+                "CALL" -> event.type.contains("CALL")
+                else -> event.type == typeFilter
+            }
+            matchesDevice && matchesType
+        }
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyList()
     )
+
+    fun setSelectedDevice(deviceName: String?) {
+        savedStateHandle["deviceName"] = deviceName
+    }
 
     fun setSelectedType(type: String?) {
         savedStateHandle["eventType"] = type
@@ -35,11 +57,9 @@ class EventsViewModel(
         }
     }
 
-    fun clearEventsForType(type: String) {
+    fun clearEventsForDevice(deviceName: String) {
         viewModelScope.launch {
-            // We don't have a DAO method for this yet, but we can add one or just clear all for simplicity 
-            // since it's local only now. For now, let's just use clearAllEvents or implement clearByType.
-            // database.dao().clearEventsByType(type)
+            database.dao().clearEventsForDevice(deviceName)
         }
     }
 }
