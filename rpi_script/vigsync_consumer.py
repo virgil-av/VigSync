@@ -50,19 +50,51 @@ def flush_logs():
     except Exception as e:
         sys.stderr.write(f"Failed to flush logs: {e}\n")
 
+# --- MQTT CALLBACKS ---
+
+def on_connect(client, userdata, flags, rc):
+    rc_map = {
+        0: "Connection successful",
+        1: "Connection refused - incorrect protocol version",
+        2: "Connection refused - invalid client identifier",
+        3: "Connection refused - server unavailable",
+        4: "Connection refused - bad username or password",
+        5: "Connection refused - not authorised"
+    }
+    msg = rc_map.get(rc, f"Unknown error (code: {rc})")
+    if rc == 0:
+        log_mem(f"MQTT Connected: {msg}")
+    else:
+        log_mem(f"MQTT Connection Failed: {msg}", "ERROR")
+
+def on_disconnect(client, userdata, rc):
+    if rc != 0:
+        log_mem(f"Unexpected MQTT disconnection (code: {rc}).", "WARNING")
+    else:
+        log_mem("MQTT Disconnected safely.")
+
+def on_publish(client, userdata, mid):
+    # This callback is called when the broker confirms receipt (PUBACK)
+    log_mem(f"Delivery Confirmed (msg_id: {mid})", "TRACE")
+
+def on_log(client, userdata, level, buf):
+    # Low-level Paho logs for deep debugging
+    if "sending" in buf.lower() or "received" in buf.lower() or "error" in buf.lower():
+        log_mem(f"Paho Internal: {buf}", "DEBUG")
+
+# --- CORE LOGIC ---
+
 def pull_config_via_adb():
-    """Forces a fresh config pull from the connected phone, overwriting local stale data."""
+    """Forces a fresh config pull from the connected phone."""
     log_mem(f"Pulling fresh configuration from ADB device...")
     phone_config_path = f"{ADB_PHONE_PATH}{CONFIG_FILE}"
     
     try:
-        # Strategy A: Use CAT to read directly (fastest, most reliable for metadata)
         result = subprocess.run(["adb", "shell", f"cat {phone_config_path}"], capture_output=True, text=True, encoding='utf-8')
         if result.returncode == 0 and result.stdout.strip():
             with open(CONFIG_FILE, "w", encoding='utf-8') as f:
                 f.write(result.stdout)
             
-            # Parse quickly to verify we got the right data
             try:
                 data = json.loads(result.stdout)
                 device = data.get("device_name", "Unknown")
@@ -70,9 +102,8 @@ def pull_config_via_adb():
                 return True
             except:
                 log_mem("Retrieved config but JSON is invalid.", "WARNING")
-                return True # Still might be usable or overwrites bad file
+                return True 
                 
-        # Strategy B: Standard pull
         result = subprocess.run(["adb", "pull", phone_config_path, "."], capture_output=True, text=True)
         if result.returncode == 0:
             log_mem("Successfully pulled configuration via ADB pull.")
@@ -86,21 +117,13 @@ def pull_config_via_adb():
         return False
 
 def load_config():
-    """Always tries to pull updated config on load to avoid stale device ID issues."""
     pull_config_via_adb()
-    
     if not os.path.exists(CONFIG_FILE):
-        log_mem(f"Config file {CONFIG_FILE} not found. Please ensure the app is running on the phone.", "ERROR")
+        log_mem(f"Config file {CONFIG_FILE} not found. Please ensure the app is running.", "ERROR")
         sys.exit(1)
 
     with open(CONFIG_FILE, "r", encoding='utf-8') as f:
         return json.load(f)
-
-def on_connect(client, userdata, flags, rc):
-    if rc == 0:
-        log_mem("Connected to MQTT Broker successfully.")
-    else:
-        log_mem(f"Failed to connect, return code {rc}", "ERROR")
 
 def run_adb_tail_stream(config, mqtt_client):
     log_path = config.get("export_file_path")
@@ -109,7 +132,7 @@ def run_adb_tail_stream(config, mqtt_client):
     device_name = config.get("device_name", "Unknown")
 
     log_mem(f"Monitoring device: {device_name} ({device_id})")
-    log_mem(f"ADB Stream Path: {log_path}")
+    log_mem(f"Targeting Topic: {prefix}/[events|status]/{device_id}")
 
     adb_command = ["adb", "shell", f"tail -n 0 -f {log_path}"]
 
@@ -142,8 +165,15 @@ def run_adb_tail_stream(config, mqtt_client):
                 if len(parts) == 2:
                     suffix, payload = parts
                     full_topic = f"{prefix}/{suffix}/{device_id}"
-                    mqtt_client.publish(full_topic, payload, qos=1)
-                    log_mem(f"Published to {full_topic}")
+                    
+                    # Publish and capture the info object
+                    info = mqtt_client.publish(full_topic, payload, qos=1)
+                    
+                    # Log that it was queued
+                    log_mem(f"Queued for {full_topic} (msg_id: {info.mid})")
+                    
+                    if not mqtt_client.is_connected():
+                        log_mem("Warning: Client is currently DISCONNECTED. Message will be queued locally.", "WARNING")
 
     except Exception as e:
         log_mem(f"Streaming error: {e}", "ERROR")
@@ -151,7 +181,6 @@ def run_adb_tail_stream(config, mqtt_client):
 
 def daemonize():
     if os.path.exists(PID_FILE):
-        # Check if process actually exists
         try:
             with open(PID_FILE, "r") as f:
                 pid = int(f.read().strip())
@@ -178,25 +207,29 @@ def run():
     daemonize()
     config = load_config()
 
-    client = mqtt.Client()
+    client = mqtt.Client(client_id=f"vigsync_pi_{config.get('device_id')[-8:]}", clean_session=False)
+    
     if config.get("username") and config.get("password"):
         client.username_pw_set(config["username"], config["password"])
 
     if config.get("use_tls", False):
         try:
-            # Use system default CA certificates
             client.tls_set()
-            log_mem("SSL/TLS Enabled for MQTT connection.")
+            log_mem("SSL/TLS Enabled for MQTT.")
         except Exception as e:
             log_mem(f"Failed to enable TLS: {e}", "ERROR")
 
+    # Set callbacks
     client.on_connect = on_connect
+    client.on_disconnect = on_disconnect
+    client.on_publish = on_publish
+    client.on_log = on_log
 
     try:
-        # Increase keepalive to 60s for stability
+        log_mem(f"Connecting to {config['broker_url']}:{config['broker_port']}...")
         client.connect(config["broker_url"], config["broker_port"], 60)
     except Exception as e:
-        log_mem(f"Could not connect to broker: {e}", "ERROR")
+        log_mem(f"CRITICAL: Could not initiate connection: {e}", "ERROR")
         sys.exit(1)
 
     client.loop_start()
