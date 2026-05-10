@@ -37,16 +37,15 @@ class VigSyncService : Service() {
     private val NOTIFICATION_ID = 1
     private var callLogObserver: CallLogObserver? = null
 
-    // Dual-SIM management
+    // Dual-SIM management: CRITICAL - Keep strong references to prevent GC
     private val subscriptionListeners = ConcurrentHashMap<Int, Any>()
     private lateinit var subscriptionManager: SubscriptionManager
 
     private val subChangedListener = object : SubscriptionManager.OnSubscriptionsChangedListener() {
         override fun onSubscriptionsChanged() {
-            Log.d("VigSyncService", "Subscriptions changed, restarting observers")
+            Log.d("VigSyncService", "Subscriptions changed, refreshing listeners")
             if (isMonitoring) {
-                stopMonitoring()
-                startMonitoring()
+                registerSubscriptionListeners()
             }
         }
     }
@@ -118,44 +117,60 @@ class VigSyncService : Service() {
     private fun registerSubscriptionListeners() {
         try {
             val canReadPhone = androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.READ_PHONE_STATE) == android.content.pm.PackageManager.PERMISSION_GRANTED
-            if (!canReadPhone) return
+            if (!canReadPhone) {
+                Log.w("VigSyncService", "Cannot register SIM listeners: READ_PHONE_STATE denied")
+                return
+            }
 
-            val activeSubscriptions = subscriptionManager.activeSubscriptionInfoList ?: return
+            val activeSubscriptions = subscriptionManager.activeSubscriptionInfoList
             val telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+
+            if (activeSubscriptions.isNullOrEmpty()) {
+                Log.i("VigSyncService", "No active SIMs found, registering Default listener as fallback")
+                registerListenerForSubId(telephonyManager, -1) 
+                return
+            }
 
             for (info in activeSubscriptions) {
                 val subId = info.subscriptionId
-                if (subscriptionListeners.containsKey(subId)) continue
-
-                val subTelephonyManager = telephonyManager.createForSubscriptionId(subId)
-                
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    val callback = object : TelephonyCallback(), TelephonyCallback.CallStateListener {
-                        override fun onCallStateChanged(state: Int) {
-                            if (state == TelephonyManager.CALL_STATE_IDLE) {
-                                callLogObserver?.processNewCalls()
-                            }
-                        }
-                    }
-                    subTelephonyManager.registerTelephonyCallback(mainExecutor, callback)
-                    subscriptionListeners[subId] = callback
-                } else {
-                    val listener = object : android.telephony.PhoneStateListener() {
-                        @Deprecated("Deprecated in Java")
-                        override fun onCallStateChanged(state: Int, phoneNumber: String?) {
-                            if (state == TelephonyManager.CALL_STATE_IDLE) {
-                                callLogObserver?.processNewCalls()
-                            }
-                        }
-                    }
-                    subTelephonyManager.listen(listener, android.telephony.PhoneStateListener.LISTEN_CALL_STATE)
-                    subscriptionListeners[subId] = listener
-                }
-                Log.d("VigSyncService", "Registered call observer for subId: $subId (${info.carrierName})")
+                Log.d("VigSyncService", "Found Active SIM: $subId (${info.carrierName})")
+                registerListenerForSubId(telephonyManager, subId)
             }
         } catch (e: Exception) {
             Log.e("VigSyncService", "Failed to register sub listeners", e)
         }
+    }
+
+    private fun registerListenerForSubId(baseManager: TelephonyManager, subId: Int) {
+        if (subscriptionListeners.containsKey(subId)) return
+
+        val subTelephonyManager = if (subId == -1) baseManager else baseManager.createForSubscriptionId(subId)
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val callback = object : TelephonyCallback(), TelephonyCallback.CallStateListener {
+                override fun onCallStateChanged(state: Int) {
+                    if (state == TelephonyManager.CALL_STATE_IDLE) {
+                        Log.d("VigSyncService", "SIM $subId went IDLE, prompting log check")
+                        callLogObserver?.processNewCalls()
+                    }
+                }
+            }
+            subTelephonyManager.registerTelephonyCallback(mainExecutor, callback)
+            subscriptionListeners[subId] = callback
+        } else {
+            val listener = object : android.telephony.PhoneStateListener() {
+                @Deprecated("Deprecated in Java")
+                override fun onCallStateChanged(state: Int, phoneNumber: String?) {
+                    if (state == TelephonyManager.CALL_STATE_IDLE) {
+                        Log.d("VigSyncService", "SIM $subId went IDLE, prompting log check")
+                        callLogObserver?.processNewCalls()
+                    }
+                }
+            }
+            subTelephonyManager.listen(listener, android.telephony.PhoneStateListener.LISTEN_CALL_STATE)
+            subscriptionListeners[subId] = listener
+        }
+        Log.d("VigSyncService", "Registered Telephony listener for SubId: $subId")
     }
 
     private fun stopMonitoring() {
@@ -164,10 +179,15 @@ class VigSyncService : Service() {
         
         val telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
         for ((subId, listener) in subscriptionListeners) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && listener is TelephonyCallback) {
-                telephonyManager.createForSubscriptionId(subId).unregisterTelephonyCallback(listener)
-            } else if (listener is android.telephony.PhoneStateListener) {
-                telephonyManager.createForSubscriptionId(subId).listen(listener, android.telephony.PhoneStateListener.LISTEN_NONE)
+            try {
+                val subTelephonyManager = if (subId == -1) telephonyManager else telephonyManager.createForSubscriptionId(subId)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && listener is TelephonyCallback) {
+                    subTelephonyManager.unregisterTelephonyCallback(listener)
+                } else if (listener is android.telephony.PhoneStateListener) {
+                    subTelephonyManager.listen(listener, android.telephony.PhoneStateListener.LISTEN_NONE)
+                }
+            } catch (e: Exception) {
+                Log.e("VigSyncService", "Error unregistering listener for $subId", e)
             }
         }
         subscriptionListeners.clear()
