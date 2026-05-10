@@ -23,6 +23,12 @@ FLUSH_INTERVAL = 6 * 3600 # 6 hours
 def log_mem(message, level="INFO"):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     entry = f"[{timestamp}] [{level}] {message}"
+    
+    # 1. Print to stdout for real-time viewing (captured by systemd or manager)
+    print(entry)
+    sys.stdout.flush()
+
+    # 2. Add to memory buffer
     memory_logs.append(entry)
 
     # Keep memory usage bounded
@@ -179,9 +185,6 @@ def run():
 
 if __name__ == "__main__":
     if "--background" in sys.argv:
-        # Note: True daemonization requires 'python-daemon' or similar,
-        # but for this requirement we'll use a simple background launch.
-        print("VigSync Consumer started in background.")
         run()
     else:
         run()
