@@ -1,6 +1,7 @@
 package com.vigsync.core
 
 import android.content.Context
+import android.content.IntentFilter
 import android.util.Log
 import com.vigsync.core.crypto.EncryptionManager
 import com.vigsync.core.models.RawMessage
@@ -52,7 +53,7 @@ class SyncManager private constructor(context: Context) {
 
     init {
         Log.d("SyncManager", "Local SyncManager Initialized")
-        exportCurrentStatus() // Send initial status immediately
+        exportCurrentStatus() 
         startPeriodicStatusUpdates()
     }
 
@@ -60,7 +61,7 @@ class SyncManager private constructor(context: Context) {
         scope.launch {
             while (isActive) {
                 exportCurrentStatus()
-                delay(60 * 1000) // Every 1 minute for dev feedback
+                delay(60 * 1000) 
             }
         }
     }
@@ -86,7 +87,7 @@ class SyncManager private constructor(context: Context) {
         val now = System.currentTimeMillis()
         val eventKey = "${type}_$data"
         
-        // 1. Global Debounce: Ignore identical events within 5 seconds
+        // 1. Global Debounce
         val lastSeen = eventDebounceCache[eventKey] ?: 0L
         if (now - lastSeen < DEBOUNCE_WINDOW) {
             Log.d("SyncManager", "Ignored duplicate $type event within window")
@@ -96,7 +97,7 @@ class SyncManager private constructor(context: Context) {
 
         val eventId = "${type}_${data.hashCode()}"
         
-        if (type == "CALL") {
+        if (type == "CALL" || type.contains("MISSED")) {
             saveEventLocally(type, data, System.currentTimeMillis())
             return
         }
@@ -132,7 +133,6 @@ class SyncManager private constructor(context: Context) {
             )
             database.dao().insertEvent(event)
             
-            // Targeted field-level encryption for legacy compatibility
             val sharedKey = appPreferences.sharedKey.first()
             val encryptedData = if (!sharedKey.isNullOrEmpty()) {
                 EncryptionManager(sharedKey).encrypt(data) ?: data
@@ -148,8 +148,12 @@ class SyncManager private constructor(context: Context) {
             )
             eventExporter.exportMessage("events", msg)
             
-            Log.d("SyncManager", "Event exported (Encrypted Data): $type")
+            Log.d("SyncManager", "Event exported: $type")
         }
+    }
+
+    fun stop() {
+        Log.d("SyncManager", "Local Stop triggered")
     }
 
     fun getEventExporter() = eventExporter
