@@ -1,7 +1,9 @@
 package com.vigsync.feature.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.*
@@ -32,7 +34,6 @@ fun EventsScreen(
     val events by viewModel.events.collectAsState()
     val selectedType by viewModel.selectedType.collectAsState()
     
-    var expanded by remember { mutableStateOf(false) }
     var clearMenuExpanded by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -40,64 +41,6 @@ fun EventsScreen(
             TopAppBar(
                 title = { Text("Event Timeline") },
                 actions = {
-                    Box(modifier = Modifier.padding(end = 8.dp)) {
-                        TextButton(onClick = { expanded = true }) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                val filterText = when (selectedType) {
-                                    "CALL", "VOIP MISSED CALL", "SYSTEM MISSED CALL", "VOIP ACTIVE CALL" -> "Calls"
-                                    "SMS" -> "SMS"
-                                    "NOTIFICATION" -> "App Alerts"
-                                    else -> "All Events"
-                                }
-                                Text(
-                                    text = filterText,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.widthIn(max = 120.dp)
-                                )
-                                Icon(Icons.Default.FilterList, contentDescription = null, modifier = Modifier.size(18.dp).padding(start = 4.dp))
-                            }
-                        }
-                        DropdownMenu(
-                            expanded = expanded,
-                            onDismissRequest = { expanded = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("All Events") },
-                                onClick = {
-                                    viewModel.setSelectedType(null)
-                                    expanded = false
-                                },
-                                leadingIcon = { Icon(Icons.Default.AllInclusive, contentDescription = null, modifier = Modifier.size(18.dp)) }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Calls") },
-                                onClick = {
-                                    viewModel.setSelectedType("CALL") 
-                                    expanded = false
-                                },
-                                leadingIcon = { Icon(Icons.Default.Call, contentDescription = null, modifier = Modifier.size(18.dp)) }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("SMS") },
-                                onClick = {
-                                    viewModel.setSelectedType("SMS")
-                                    expanded = false
-                                },
-                                leadingIcon = { Icon(Icons.Default.Sms, contentDescription = null, modifier = Modifier.size(18.dp)) }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("App Alerts") },
-                                onClick = {
-                                    viewModel.setSelectedType("NOTIFICATION")
-                                    expanded = false
-                                },
-                                leadingIcon = { Icon(Icons.Default.Notifications, contentDescription = null, modifier = Modifier.size(18.dp)) }
-                            )
-                        }
-                    }
-
                     Box {
                         IconButton(onClick = { clearMenuExpanded = true }) {
                             Icon(Icons.Default.DeleteSweep, contentDescription = "Clear Options")
@@ -120,24 +63,63 @@ fun EventsScreen(
             )
         }
     ) { innerPadding ->
-        if (events.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize().padding(innerPadding), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Default.History, contentDescription = null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.outline)
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("No events captured yet", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.outline)
+        Column(modifier = Modifier.padding(innerPadding)) {
+            // Per-Type Filter (Pill Buttons)
+            EventTypeFilters(
+                selectedType = selectedType,
+                onTypeSelected = { viewModel.setSelectedType(it) }
+            )
+
+            if (events.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.History, contentDescription = null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.outline)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("No events captured yet", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.outline)
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(events) { event ->
+                        EventCard(event)
+                    }
                 }
             }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(innerPadding),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(events) { event ->
-                    EventCard(event)
-                }
-            }
+        }
+    }
+}
+
+@Composable
+fun EventTypeFilters(
+    selectedType: String?,
+    onTypeSelected: (String?) -> Unit
+) {
+    val types = listOf(
+        null to "All",
+        "CALL" to "Calls",
+        "SMS" to "SMS",
+        "NOTIFICATION" to "App Alerts"
+    )
+
+    LazyRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items(types) { (type, label) ->
+            FilterChip(
+                selected = selectedType == type,
+                onClick = { onTypeSelected(type) },
+                label = { Text(label) },
+                leadingIcon = if (selectedType == type) {
+                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                } else null
+            )
         }
     }
 }
@@ -163,7 +145,7 @@ fun EventCard(event: EventEntity) {
         }
     }
 
-    // Special handling for VOIP tags if parsing failed or for specific labeling
+    // Special handling for VOIP tags if parsing failed
     if (appLabel == null) {
         if (event.type.contains("VOIP")) {
             appLabel = "VoIP App"
