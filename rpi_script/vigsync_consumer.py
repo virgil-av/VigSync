@@ -5,6 +5,7 @@ import subprocess
 import paho.mqtt.client as mqtt
 import sys
 import signal
+import select
 from datetime import datetime
 
 # --- CONFIGURATION ---
@@ -13,6 +14,9 @@ LOG_FILE = "vigsync_consumer.log"
 PID_FILE = "vigsync_consumer.pid"
 # The path inside the phone where the app saves the config
 ADB_PHONE_PATH = "/storage/emulated/0/Android/data/com.vigsync/files/Documents/"
+
+# --- WATCHDOG ---
+STREAM_TIMEOUT = 180 # 3 minutes. (App heartbeats every 60s, so 180s is safe)
 
 # --- MEMORY LOGGING ---
 memory_logs = []
@@ -24,16 +28,13 @@ def log_mem(message, level="INFO"):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     entry = f"[{timestamp}] [{level}] {message}"
     
-    # 1. Print to stdout for real-time viewing
     print(entry)
     sys.stdout.flush()
 
-    # 2. Add to memory buffer
     memory_logs.append(entry)
     if len(memory_logs) > MAX_MEM_LOGS:
         memory_logs.pop(0)
 
-    # Immediate flush on ERROR
     if level == "ERROR":
         flush_logs()
 
@@ -74,11 +75,9 @@ def on_disconnect(client, userdata, rc):
         log_mem("MQTT Disconnected safely.")
 
 def on_publish(client, userdata, mid):
-    # This callback is called when the broker confirms receipt (PUBACK)
     log_mem(f"Delivery Confirmed (msg_id: {mid})", "TRACE")
 
 def on_log(client, userdata, level, buf):
-    # Low-level Paho logs for deep debugging
     if "sending" in buf.lower() or "received" in buf.lower() or "error" in buf.lower():
         log_mem(f"Paho Internal: {buf}", "DEBUG")
 
@@ -119,7 +118,7 @@ def pull_config_via_adb():
 def load_config():
     pull_config_via_adb()
     if not os.path.exists(CONFIG_FILE):
-        log_mem(f"Config file {CONFIG_FILE} not found. Please ensure the app is running.", "ERROR")
+        log_mem(f"Config file {CONFIG_FILE} not found.", "ERROR")
         sys.exit(1)
 
     with open(CONFIG_FILE, "r", encoding='utf-8') as f:
@@ -132,9 +131,10 @@ def run_adb_tail_stream(config, mqtt_client):
     device_name = config.get("device_name", "Unknown")
 
     log_mem(f"Monitoring device: {device_name} ({device_id})")
-    log_mem(f"Targeting Topic: {prefix}/[events|status]/{device_id}")
+    log_mem(f"Stream Source: {log_path}")
 
     adb_command = ["adb", "shell", f"tail -n 0 -f {log_path}"]
+    process = None
 
     try:
         process = subprocess.Popen(
@@ -151,6 +151,15 @@ def run_adb_tail_stream(config, mqtt_client):
             if time.time() - last_flush_time > FLUSH_INTERVAL:
                 flush_logs()
 
+            # --- WATCHDOG: Wait for data with timeout ---
+            ready, _, _ = select.select([process.stdout], [], [], STREAM_TIMEOUT)
+            
+            if not ready:
+                log_mem(f"ADB stream stalled (no data for {STREAM_TIMEOUT}s). Heartbeat missed. Restarting...", "WARNING")
+                process.terminate()
+                process.wait()
+                return 
+
             line = process.stdout.readline()
             if not line:
                 if process.poll() is not None:
@@ -166,10 +175,7 @@ def run_adb_tail_stream(config, mqtt_client):
                     suffix, payload = parts
                     full_topic = f"{prefix}/{suffix}/{device_id}"
                     
-                    # Publish and capture the info object
                     info = mqtt_client.publish(full_topic, payload, qos=1)
-                    
-                    # Log that it was queued
                     log_mem(f"Queued for {full_topic} (msg_id: {info.mid})")
                     
                     if not mqtt_client.is_connected():
@@ -178,6 +184,8 @@ def run_adb_tail_stream(config, mqtt_client):
     except Exception as e:
         log_mem(f"Streaming error: {e}", "ERROR")
         time.sleep(2)
+        if process:
+            process.terminate()
 
 def daemonize():
     if os.path.exists(PID_FILE):
@@ -187,8 +195,9 @@ def daemonize():
             os.kill(pid, 0)
             log_mem(f"Consumer already running (PID: {pid}).", "ERROR")
             sys.exit(1)
-        except (ProcessLookupError, ValueError, OSError):
-            os.remove(PID_FILE)
+        except:
+            if os.path.exists(PID_FILE):
+                os.remove(PID_FILE)
     
     with open(PID_FILE, "w") as f:
         f.write(str(os.getpid()))
@@ -219,7 +228,6 @@ def run():
         except Exception as e:
             log_mem(f"Failed to enable TLS: {e}", "ERROR")
 
-    # Set callbacks
     client.on_connect = on_connect
     client.on_disconnect = on_disconnect
     client.on_publish = on_publish
@@ -236,6 +244,7 @@ def run():
 
     while True:
         try:
+            config = load_config()
             run_adb_tail_stream(config, client)
         except Exception as e:
             log_mem(f"Main loop error: {e}", "ERROR")
