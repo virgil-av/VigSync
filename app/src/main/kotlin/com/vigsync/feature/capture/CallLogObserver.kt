@@ -58,7 +58,6 @@ class CallLogObserver(
         observerScope.launch {
             processingMutex.withLock {
                 try {
-                    // Increased delay to ensure system has written to log
                     delay(3000) 
 
                     if (lastProcessedEntryId == -1L) {
@@ -70,7 +69,6 @@ class CallLogObserver(
                     Log.d("VigSync", "Found ${newCalls.size} new call entries since $lastProcessedEntryId")
 
                     for (call in newCalls) {
-                        // Always update last ID to move forward
                         lastProcessedEntryId = call.entryId
                         preferences.edit().putLong("last_processed_call_id", lastProcessedEntryId).apply()
 
@@ -122,7 +120,7 @@ class CallLogObserver(
                 arrayOf(CallLog.Calls._ID),
                 null,
                 null,
-                "${CallLog.Calls._ID} DESC LIMIT 1"
+                "${CallLog.Calls._ID} DESC"
             )?.use { cursor ->
                 lastProcessedEntryId = if (cursor.moveToFirst()) cursor.getLong(0) else 0L
                 preferences.edit().putLong("last_processed_call_id", lastProcessedEntryId).apply()
@@ -162,10 +160,9 @@ class CallLogObserver(
         val typeValue = getInt(getColumnIndexOrThrow(CallLog.Calls.TYPE))
         val durationSeconds = getLong(getColumnIndexOrThrow(CallLog.Calls.DURATION))
         
-        val subIdColumn = if (Build.VERSION.SDK_INT >= 24) "subscription_id" else "phone_account_id"
         var subId: String? = null
         try {
-            val idx = getColumnIndex(subIdColumn)
+            val idx = getColumnIndex("subscription_id")
             if (idx != -1) subId = getString(idx)
         } catch (e: Exception) {}
         

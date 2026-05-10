@@ -71,24 +71,31 @@ class VigNotificationListener : NotificationListenerService() {
             var eventType = "NOTIFICATION"
             var eventData = "$appLabel|$packageName|$title: $text"
 
-            // --- SPECIAL VOIP MISSED CALL DETECTION ---
-            if (packageName == "com.whatsapp" || packageName.contains("viber") || packageName.contains("telegram")) {
-                val category = sbn.notification.category
-                val isCallCategory = category == Notification.CATEGORY_CALL || category == "call"
-                val isMissed = title.contains("Missed", ignoreCase = true) || 
-                               text.contains("Missed", ignoreCase = true) ||
-                               title.contains("Lost", ignoreCase = true)
+            // --- SPECIAL VOIP CALL DETECTION ---
+            val category = sbn.notification.category
+            val isCallCategory = category == Notification.CATEGORY_CALL || category == "call"
+            
+            // Heuristic for VoIP missed/lost calls
+            val isMissed = title.contains("Missed", ignoreCase = true) || 
+                           text.contains("Missed", ignoreCase = true) ||
+                           title.contains("Lost", ignoreCase = true) ||
+                           text.contains("Lost", ignoreCase = true)
 
-                if (isMissed) {
-                    eventType = "VOIP MISSED CALL"
-                    eventData = "[$appLabel] From: $title"
-                } else if (isCallCategory) {
-                    return@launch
-                }
+            if (isMissed) {
+                eventType = "VOIP MISSED CALL"
+                eventData = "[$appLabel] From: $title"
+            } else if (isCallCategory || text.contains("Ongoing call", ignoreCase = true)) {
+                eventType = "VOIP ACTIVE CALL"
+                eventData = "[$appLabel] Active Call: $title"
             }
 
             Log.d("VigSync", "Event Captured ($eventType) from $packageName: $title")
             SyncManager.getInstance(applicationContext).publishEvent(eventType, eventData)
+            
+            // --- IMPORTANT: Return after special detection to avoid fall-through duplication ---
+            if (eventType != "NOTIFICATION") {
+                return@launch 
+            }
         }
     }
 
@@ -151,8 +158,8 @@ class VigNotificationListener : NotificationListenerService() {
     }
 
     private fun isDuplicate(key: String, now: Long): Boolean {
-        recentNotificationWindows.entries.removeIf { now - it.value > DEDUPE_WINDOW_MILLIS }
         synchronized(recentNotificationWindows) {
+            recentNotificationWindows.entries.removeIf { now - it.value > DEDUPE_WINDOW_MILLIS }
             val lastSeen = recentNotificationWindows[key]
             if (lastSeen != null && (now - lastSeen) <= DEDUPE_WINDOW_MILLIS) {
                 return true
