@@ -254,6 +254,18 @@ fun MqttSettingsTab(viewModel: SettingsViewModel) {
         ) {
             Text("Save MQTT Changes")
         }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        OutlinedButton(
+            onClick = { viewModel.disconnectMqtt() },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+        ) {
+            Icon(Icons.Default.LinkOff, contentDescription = null)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Force Disconnect All MQTT")
+        }
     }
 }
 

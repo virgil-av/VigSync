@@ -67,6 +67,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         SyncManager.getInstance(getApplication()).sendTestNotification()
     }
 
+    fun disconnectMqtt() {
+        SyncManager.getInstance(getApplication()).stop()
+    }
+
     fun toggleAppSync(packageName: String, enabled: Boolean) {
         viewModelScope.launch {
             appPreferences.toggleAppDisabled(packageName, !enabled)
