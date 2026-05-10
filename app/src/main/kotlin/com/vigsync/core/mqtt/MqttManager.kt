@@ -171,7 +171,10 @@ class MqttManager {
                 .maxDelay(10, TimeUnit.SECONDS)
                 .applyAutomaticReconnect()
 
-        if (useTls) builder = builder.sslWithDefaultConfig()
+        if (useTls) {
+            MqttLogger.log("Enabling SSL/TLS with default system trust store...", "TRACE")
+            builder = builder.sslWithDefaultConfig()
+        }
 
         val asyncClient = builder
             .addConnectedListener {
@@ -229,7 +232,10 @@ class MqttManager {
                 .maxDelay(10, TimeUnit.SECONDS)
                 .applyAutomaticReconnect()
 
-        if (useTls) builder = builder.sslWithDefaultConfig()
+        if (useTls) {
+            MqttLogger.log("Enabling SSL/TLS with default system trust store...", "TRACE")
+            builder = builder.sslWithDefaultConfig()
+        }
 
         val asyncClient = builder
             .addConnectedListener {
