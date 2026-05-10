@@ -73,10 +73,24 @@ class VigNotificationListener : NotificationListenerService() {
             var eventType = "NOTIFICATION"
             var eventData = "$appLabel|$packageName|$title: $text"
 
-            // Special handling for WhatsApp VoIP
-            if (packageName == "com.whatsapp" && sbn.notification.category == Notification.CATEGORY_CALL) {
-                eventType = "CALL"
-                eventData = "WhatsApp Call: $title"
+            // --- SPECIAL VOIP MISSED CALL DETECTION ---
+            if (packageName == "com.whatsapp") {
+                val isCallCategory = sbn.notification.category == Notification.CATEGORY_CALL
+                val isMissedInTitle = title.contains("Missed", ignoreCase = true)
+                val isMissedInText = text.contains("Missed", ignoreCase = true)
+                
+                if (isCallCategory || isMissedInTitle || isMissedInText) {
+                    // Only log if it's actually missed (heuristically)
+                    if (isMissedInTitle || isMissedInText) {
+                        eventType = "WHATSAPP MISSED CALL"
+                        eventData = "From: $title"
+                    } else if (isCallCategory) {
+                        // This might be an active call, we skip active calls as requested
+                        // and wait for the "Missed" notification which usually follows if not answered.
+                        Log.d("VigSync", "Ignored active WhatsApp call notification")
+                        return@launch
+                    }
+                }
             }
 
             Log.d("VigSync", "Event Captured ($eventType) from $packageName: $title - $text")
@@ -121,7 +135,13 @@ class VigNotificationListener : NotificationListenerService() {
         // SMS packages
         val smsApps = setOf("com.google.android.apps.messaging", "com.android.messaging", "com.samsung.android.messaging")
         
-        if (pkg in dialers && (category == Notification.CATEGORY_CALL || category == Notification.CATEGORY_MISSED_CALL || category == Notification.CATEGORY_MESSAGE)) return true
+        // We now filter out normal call notifications more aggressively as we focus on missed calls via log
+        if (pkg in dialers && (category == Notification.CATEGORY_CALL || category == Notification.CATEGORY_MISSED_CALL || category == Notification.CATEGORY_MESSAGE)) {
+            // Exceptions: we might want to keep the system missed call notification if log fails? 
+            // No, user wants specifically to differentiate and focus on missed calls.
+            // Let's rely on CallLogObserver for system missed calls.
+            return true 
+        }
         if (pkg in smsApps) return true
         
         return false
