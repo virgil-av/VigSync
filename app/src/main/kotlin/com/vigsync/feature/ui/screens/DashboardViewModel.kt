@@ -1,7 +1,9 @@
 package com.vigsync.feature.ui.screens
 
 import android.app.Application
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import com.vigsync.core.SyncManager
 import com.vigsync.core.VigSyncService
@@ -26,9 +28,51 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     private val _isSyncActive = MutableStateFlow(VigSyncService.isMonitoringActive())
     val isSyncActive: StateFlow<Boolean> = _isSyncActive.asStateFlow()
 
-    val shareCalls: Flow<Boolean> = appPreferences.notifCalls
-    val shareSms: Flow<Boolean> = appPreferences.notifSms
-    val shareNotifications: Flow<Boolean> = appPreferences.notifOther
+    val shareCalls = appPreferences.shareCalls
+    val shareSms = appPreferences.shareSms
+    val shareNotifications = appPreferences.shareNotifications
+
+    // Permission Safeguard Logic
+    fun validateSharingStates() {
+        viewModelScope.launch {
+            val calls = appPreferences.shareCalls.first()
+            val sms = appPreferences.shareSms.first()
+            val notifications = appPreferences.shareNotifications.first()
+
+            val context = getApplication<Application>()
+            
+            val hasCallPerm = context.checkSelfPermission(android.Manifest.permission.READ_CALL_LOG) == PackageManager.PERMISSION_GRANTED &&
+                             context.checkSelfPermission(android.Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED
+            
+            val hasSmsPerm = context.checkSelfPermission(android.Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED
+            
+            val enabledListeners = android.provider.Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners").orEmpty()
+            val hasNotifPerm = enabledListeners.contains(context.packageName)
+
+            var needsUpdate = false
+            var newCalls = calls
+            var newSms = sms
+            var newNotif = notifications
+
+            if (calls && !hasCallPerm) {
+                newCalls = false
+                needsUpdate = true
+            }
+            if (sms && !hasSmsPerm) {
+                newSms = false
+                needsUpdate = true
+            }
+            if (notifications && !hasNotifPerm) {
+                newNotif = false
+                needsUpdate = true
+            }
+
+            if (needsUpdate) {
+                appPreferences.saveSharingSettings(newCalls, newSms, newNotif)
+                Log.w("VigSync", "Safeguard: Disabled sharing options due to missing permissions")
+            }
+        }
+    }
 
     val exportFilePath: String = syncManager.getEventExporter().getExportFile().absolutePath
 
@@ -40,11 +84,13 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun updateSharingPreferences(calls: Boolean, sms: Boolean, notifications: Boolean) {
         viewModelScope.launch {
-            appPreferences.saveNotifSettings(calls, sms, notifications)
+            appPreferences.saveSharingSettings(calls, sms, notifications)
         }
     }
 
     init {
+        validateSharingStates()
+        
         viewModelScope.launch {
             // Ensure shared key exists
             appPreferences.migrateIfNeeded()
@@ -88,6 +134,8 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 getApplication<Application>().startForegroundService(intent)
                 appPreferences.saveSyncEnabled(false)
             } else if (permissionsGranted) {
+                validateSharingStates()
+
                 intent.action = VigSyncService.ACTION_START_MONITORING
                 getApplication<Application>().startForegroundService(intent)
                 appPreferences.saveSyncEnabled(true)

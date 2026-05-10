@@ -201,6 +201,7 @@ fun DashboardScreen(
                     if (isMonitoringActive) {
                         showStopConfirmation = true
                     } else {
+                        viewModel.validateSharingStates()
                         localShareCalls = shareCalls
                         localShareSms = shareSms
                         val flat = android.provider.Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners")
