@@ -29,6 +29,11 @@ class AppPreferences(private val context: Context) {
 
         val SYNC_ENABLED = booleanPreferencesKey("sync_enabled")
 
+        // Sharing Toggles (Safeguarded)
+        val SHARE_CALLS = booleanPreferencesKey("share_calls")
+        val SHARE_SMS = booleanPreferencesKey("share_sms")
+        val SHARE_NOTIFICATIONS = booleanPreferencesKey("share_notifications")
+
         // App-specific filtering
         val OBSERVED_APP_PACKAGES = stringSetPreferencesKey("observed_app_packages")
         val DISABLED_APP_PACKAGES = stringSetPreferencesKey("disabled_app_packages")
@@ -169,6 +174,18 @@ class AppPreferences(private val context: Context) {
 
     suspend fun saveSyncEnabled(enabled: Boolean) {
         context.dataStore.edit { it[SYNC_ENABLED] = enabled }
+    }
+
+    val shareCalls: Flow<Boolean> = context.dataStore.data.map { it[SHARE_CALLS] ?: false }
+    val shareSms: Flow<Boolean> = context.dataStore.data.map { it[SHARE_SMS] ?: false }
+    val shareNotifications: Flow<Boolean> = context.dataStore.data.map { it[SHARE_NOTIFICATIONS] ?: false }
+
+    suspend fun saveSharingSettings(calls: Boolean, sms: Boolean, notifications: Boolean) {
+        context.dataStore.edit {
+            it[SHARE_CALLS] = calls
+            it[SHARE_SMS] = sms
+            it[SHARE_NOTIFICATIONS] = notifications
+        }
     }
 
     val observedAppPackages: Flow<Set<String>> = context.dataStore.data.map { it[OBSERVED_APP_PACKAGES] ?: emptySet() }

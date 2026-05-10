@@ -1,64 +1,100 @@
 package com.vigsync.feature.ui.screens
 
 import android.app.Application
+import android.content.Context
+import android.content.pm.PackageManager
 import androidx.lifecycle.AndroidViewModel
-import com.vigsync.core.SyncManager
-import com.vigsync.core.mqtt.MqttLogger
-import kotlinx.coroutines.flow.map
-
 import androidx.lifecycle.viewModelScope
-import com.vigsync.core.mqtt.MqttService
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
-
-import com.vigsync.data.local.VigSyncDatabase
-import com.vigsync.data.local.DeviceStatusEntity
+import com.vigsync.core.SyncManager
 import com.vigsync.core.mqtt.LogEntry
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.Flow
+import com.vigsync.core.mqtt.MqttLogger
+import com.vigsync.core.mqtt.MqttService
+import com.vigsync.data.local.DeviceStatusEntity
+import com.vigsync.data.local.VigSyncDatabase
+import com.vigsync.data.prefs.AppPreferences
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
 
 class DashboardViewModel(application: Application) : AndroidViewModel(application) {
     private val syncManager = SyncManager.getInstance(application)
     private val database = VigSyncDatabase.getInstance(application)
-    private val appPreferences = com.vigsync.data.prefs.AppPreferences(application)
+    private val appPreferences = AppPreferences(application)
     
     val connectionStatus = syncManager.getMqttManager().connectionStatus
-    
     val localDeviceId: String = syncManager.getLocalDeviceId()
     
     val pairedDevices: StateFlow<List<DeviceStatusEntity>> = database.dao().getAllDeviceStatus()
         .map { list -> list.filter { it.deviceId != localDeviceId } }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList<DeviceStatusEntity>())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val recentEvents: Flow<List<LogEntry>> = MqttLogger.logs.map { it.filter { entry: LogEntry -> entry.status == "RECEIVED" || entry.status == "SENT" } }
+    val recentEvents: Flow<List<LogEntry>> = MqttLogger.logs.map { it.filter { entry -> entry.status == "RECEIVED" || entry.status == "SENT" } }
 
-    private val _isServiceRunning: MutableStateFlow<Boolean> = MutableStateFlow<Boolean>(MqttService.isServiceRunning())
+    private val _isServiceRunning = MutableStateFlow(MqttService.isServiceRunning())
     val isServiceRunning: StateFlow<Boolean> = _isServiceRunning.asStateFlow()
 
-    private val _isSyncActive: MutableStateFlow<Boolean> = MutableStateFlow<Boolean>(MqttService.isSyncActive())
+    private val _isSyncActive = MutableStateFlow(MqttService.isSyncActive())
     val isSyncActive: StateFlow<Boolean> = _isSyncActive.asStateFlow()
+
+    val shareCalls = appPreferences.shareCalls
+    val shareSms = appPreferences.shareSms
+    val shareNotifications = appPreferences.shareNotifications
+
+    // Permission Safeguard Logic
+    fun validateSharingStates() {
+        viewModelScope.launch {
+            val calls = appPreferences.shareCalls.first()
+            val sms = appPreferences.shareSms.first()
+            val notifications = appPreferences.shareNotifications.first()
+
+            val context = getApplication<Application>()
+            
+            val hasCallPerm = context.checkSelfPermission(android.Manifest.permission.READ_CALL_LOG) == PackageManager.PERMISSION_GRANTED &&
+                             context.checkSelfPermission(android.Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED
+            
+            val hasSmsPerm = context.checkSelfPermission(android.Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED
+            
+            val enabledListeners = android.provider.Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners").orEmpty()
+            val hasNotifPerm = enabledListeners.contains(context.packageName)
+
+            var needsUpdate = false
+            var newCalls = calls
+            var newSms = sms
+            var newNotif = notifications
+
+            if (calls && !hasCallPerm) {
+                newCalls = false
+                needsUpdate = true
+            }
+            if (sms && !hasSmsPerm) {
+                newSms = false
+                needsUpdate = true
+            }
+            if (notifications && !hasNotifPerm) {
+                newNotif = false
+                needsUpdate = true
+            }
+
+            if (needsUpdate) {
+                appPreferences.saveSharingSettings(newCalls, newSms, newNotif)
+                MqttLogger.logApp("Safeguard: Disabled sharing options due to missing permissions", "WARNING")
+            }
+        }
+    }
+
+    fun updateSharingPreferences(calls: Boolean, sms: Boolean, notifications: Boolean) {
+        viewModelScope.launch {
+            appPreferences.saveSharingSettings(calls, sms, notifications)
+        }
+    }
 
     fun retryConnection() {
         syncManager.restart()
     }
 
-    val shareCalls: Flow<Boolean> = appPreferences.notifCalls
-    val shareSms: Flow<Boolean> = appPreferences.notifSms
-    val shareNotifications: Flow<Boolean> = appPreferences.notifOther
-
-    fun updateSharingPreferences(calls: Boolean, sms: Boolean, notifications: Boolean) {
-        viewModelScope.launch {
-            appPreferences.saveNotifSettings(calls, sms, notifications)
-        }
-    }
-
     init {
-        // Ensure service is running for MQTT if we have config
+        validateSharingStates()
+        
         viewModelScope.launch {
             if (appPreferences.brokerUrl.first().isNotEmpty()) {
                 val intent = android.content.Intent(getApplication(), MqttService::class.java).apply {
@@ -66,7 +102,6 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 }
                 getApplication<Application>().startForegroundService(intent)
                 
-                // If sync was enabled previously, start it
                 if (appPreferences.syncEnabled.first()) {
                     val syncIntent = android.content.Intent(getApplication(), MqttService::class.java).apply {
                         action = MqttService.ACTION_START_SYNC
@@ -92,11 +127,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             events.groupBy { it.sourceDevice ?: "Unknown" }
                 .mapValues { it.value.size }
         }
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
-            initialValue = emptyMap()
-        )
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
     fun toggleSync(permissionsGranted: Boolean = true) {
         val intent = android.content.Intent(getApplication(), MqttService::class.java)
@@ -106,7 +137,8 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 getApplication<Application>().startForegroundService(intent)
                 appPreferences.saveSyncEnabled(false)
             } else if (permissionsGranted) {
-                // Ensure the main service is also running
+                validateSharingStates() // One last check
+                
                 val startIntent = android.content.Intent(getApplication(), MqttService::class.java).apply {
                     action = MqttService.ACTION_START
                 }
@@ -124,7 +156,6 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun toggleService(permissionsGranted: Boolean = true) {
-        // This is now more about the whole MQTT service
         val intent = android.content.Intent(getApplication(), MqttService::class.java)
         if (isServiceRunning.value) {
             intent.action = MqttService.ACTION_STOP

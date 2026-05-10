@@ -228,6 +228,7 @@ fun DashboardScreen(
                     if (isSyncActive) {
                         showStopConfirmation = true
                     } else {
+                        viewModel.validateSharingStates()
                         localShareCalls = shareCalls
                         localShareSms = shareSms
                         // Check notification listener status accurately
