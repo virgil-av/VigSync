@@ -53,13 +53,12 @@ class CallLogObserver(
         processNewCalls()
     }
 
-    private fun processNewCalls() {
+    fun processNewCalls() {
         observerScope.launch {
             processingMutex.withLock {
                 try {
                     delay(2500) // Wait for system to write to log
 
-                    val maxId = getMaxCallId()
                     if (lastProcessedEntryId == -1L) {
                         seedLastProcessedId()
                         return@withLock
@@ -67,7 +66,14 @@ class CallLogObserver(
 
                     val newCalls = queryNewCalls(lastProcessedEntryId)
                     for (call in newCalls) {
-                        SyncManager.getInstance(appContext).publishEvent("CALL", "Call ${call.callType}: ${call.number} (Duration: ${call.durationSeconds}s)")
+                        // --- FOCUS ON MISSED CALLS ONLY ---
+                        if (call.callType == "Missed") {
+                            Log.d("VigSync", "System Missed Call Captured: ${call.number}")
+                            SyncManager.getInstance(appContext).publishEvent("SYSTEM MISSED CALL", "From: ${call.number}")
+                        } else {
+                            Log.d("VigSync", "Ignored non-missed call log entry: ${call.callType}")
+                        }
+                        
                         lastProcessedEntryId = call.entryId
                         preferences.edit().putLong("last_processed_call_id", lastProcessedEntryId).apply()
                     }
@@ -130,22 +136,6 @@ class CallLogObserver(
             callType = mapCallType(typeValue),
             durationSeconds = durationSeconds
         )
-    }
-
-    private fun getMaxCallId(): Long {
-        return try {
-            appContext.contentResolver.query(
-                CallLog.Calls.CONTENT_URI,
-                arrayOf(CallLog.Calls._ID),
-                null,
-                null,
-                "${CallLog.Calls._ID} DESC LIMIT 1"
-            )?.use { cursor ->
-                if (cursor.moveToFirst()) cursor.getLong(0) else -1L
-            } ?: -1L
-        } catch (_: Exception) {
-            -1L
-        }
     }
 
     private fun mapCallType(typeValue: Int): String {
