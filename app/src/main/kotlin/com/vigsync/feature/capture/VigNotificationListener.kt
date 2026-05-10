@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 class VigNotificationListener : NotificationListenerService() {
 
     private val recentNotificationWindows = ConcurrentHashMap<String, Long>()
-    private val DEDUPE_WINDOW_MILLIS = 8000L
+    private val DEDUPE_WINDOW_MILLIS = 10000L // 10s
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private lateinit var appPreferences: AppPreferences
 
@@ -37,30 +37,28 @@ class VigNotificationListener : NotificationListenerService() {
             appPreferences.addObservedPackage(packageName)
             val disabledApps = appPreferences.disabledAppPackages.first()
             if (packageName in disabledApps) {
-                Log.d("VigSync", "Ignored notification from DISABLED app: $packageName")
                 return@launch
             }
 
             if (isNoisyNotification(sbn)) {
-                Log.d("VigSync", "Ignored noisy notification from $packageName")
                 return@launch
             }
 
             val extras = sbn.notification.extras
-            val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
-            val text = extractBody(sbn)
+            val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim() ?: ""
+            val text = extractBody(sbn).trim()
 
-            // Deduplication Logic: Ignore if it's likely handled by Dialer/SMS observers
-            if (isLikelyRedundant(sbn)) {
-                Log.d("VigSync", "Ignored redundant notification from $packageName")
-                return@launch
-            }
-
-            val eventKey = "$packageName|$title|$text"
+            // Deduplication Logic: Use a "canonical" key
+            val eventKey = "$packageName|${title.lowercase()}|${text.lowercase()}"
             val now = System.currentTimeMillis()
             
             if (isDuplicate(eventKey, now)) {
-                Log.d("VigSync", "Ignored duplicate notification from $packageName")
+                Log.d("VigSync", "Blocked duplicate notification from $packageName")
+                return@launch
+            }
+
+            // Deduplication Logic: Ignore if it's likely handled by Dialer/SMS observers
+            if (isLikelyRedundant(sbn)) {
                 return@launch
             }
 
@@ -73,27 +71,30 @@ class VigNotificationListener : NotificationListenerService() {
             var eventType = "NOTIFICATION"
             var eventData = "$appLabel|$packageName|$title: $text"
 
-            // --- SPECIAL VOIP MISSED CALL DETECTION ---
-            if (packageName == "com.whatsapp") {
-                val isCallCategory = sbn.notification.category == Notification.CATEGORY_CALL
-                val isMissedInTitle = title.contains("Missed", ignoreCase = true)
-                val isMissedInText = text.contains("Missed", ignoreCase = true)
+            // --- SPECIAL VOIP CALL DETECTION ---
+            val category = sbn.notification.category
+            val isCallCategory = category == Notification.CATEGORY_CALL || category == "call"
+            
+            // Heuristic for VoIP missed/lost calls across various apps
+            val isMissed = title.contains("Missed", ignoreCase = true) || 
+                           text.contains("Missed", ignoreCase = true) ||
+                           title.contains("Lost", ignoreCase = true) ||
+                           text.contains("Lost", ignoreCase = true)
+
+            if (isMissed) {
+                eventType = "VOIP MISSED CALL"
+                eventData = "[$appLabel] From: $title"
+            } else if (isCallCategory || text.contains("Ongoing call", ignoreCase = true)) {
+                // Label correctly so it's not a generic notification
+                eventType = "VOIP ACTIVE CALL"
+                eventData = "[$appLabel] Active Call: $title"
                 
-                if (isCallCategory || isMissedInTitle || isMissedInText) {
-                    // Only log if it's actually missed (heuristically)
-                    if (isMissedInTitle || isMissedInText) {
-                        eventType = "WHATSAPP MISSED CALL"
-                        eventData = "From: $title"
-                    } else if (isCallCategory) {
-                        // This might be an active call, we skip active calls as requested
-                        // and wait for the "Missed" notification which usually follows if not answered.
-                        Log.d("VigSync", "Ignored active WhatsApp call notification")
-                        return@launch
-                    }
-                }
+                // Optional: skip active calls if user only wants missed
+                // Log.d("VigSync", "Ignored active VoIP call")
+                // return@launch 
             }
 
-            Log.d("VigSync", "Event Captured ($eventType) from $packageName: $title - $text")
+            Log.d("VigSync", "Event Captured ($eventType) from $packageName: $title")
             SyncManager.getInstance(applicationContext).publishEvent(eventType, eventData)
         }
     }
@@ -107,7 +108,6 @@ class VigNotificationListener : NotificationListenerService() {
         if (sbn.packageName == "com.whatsapp") {
             val noisyPatterns = listOf("Checking for new messages", "WhatsApp Web is active", "WhatsApp Web is currently active")
             if (noisyPatterns.any { title.contains(it) || text.contains(it) }) return true
-            // Filter out summary notifications like "2 new messages"
             if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) return true
             if (text.matches(Regex("\\d+ new messages?"))) return true
         }
@@ -128,18 +128,12 @@ class VigNotificationListener : NotificationListenerService() {
             "com.android.phone", 
             "com.android.server.telecom", 
             "com.samsung.android.dialer",
-            "com.samsung.android.incallui",
-            "com.whatsapp",
-            "org.telegram.messenger"
+            "com.samsung.android.incallui"
         )
         // SMS packages
         val smsApps = setOf("com.google.android.apps.messaging", "com.android.messaging", "com.samsung.android.messaging")
         
-        // We now filter out normal call notifications more aggressively as we focus on missed calls via log
         if (pkg in dialers && (category == Notification.CATEGORY_CALL || category == Notification.CATEGORY_MISSED_CALL || category == Notification.CATEGORY_MESSAGE)) {
-            // Exceptions: we might want to keep the system missed call notification if log fails? 
-            // No, user wants specifically to differentiate and focus on missed calls.
-            // Let's rely on CallLogObserver for system missed calls.
             return true 
         }
         if (pkg in smsApps) return true
@@ -150,7 +144,6 @@ class VigNotificationListener : NotificationListenerService() {
     private fun extractBody(sbn: StatusBarNotification): String {
         val extras = sbn.notification.extras
         
-        // Try MessagingStyle (WhatsApp, etc.)
         val messagingStyle = NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(sbn.notification)
         if (messagingStyle != null) {
             return messagingStyle.messages.mapNotNull { it.text?.toString() }
@@ -166,8 +159,16 @@ class VigNotificationListener : NotificationListenerService() {
 
     private fun isDuplicate(key: String, now: Long): Boolean {
         recentNotificationWindows.entries.removeIf { now - it.value > DEDUPE_WINDOW_MILLIS }
-        val lastSeen = recentNotificationWindows.putIfAbsent(key, now)
-        return lastSeen != null && now - lastSeen <= DEDUPE_WINDOW_MILLIS
+        
+        // Thread-safe check-and-set
+        synchronized(recentNotificationWindows) {
+            val lastSeen = recentNotificationWindows[key]
+            if (lastSeen != null && (now - lastSeen) <= DEDUPE_WINDOW_MILLIS) {
+                return true
+            }
+            recentNotificationWindows[key] = now
+            return false
+        }
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {}
