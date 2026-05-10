@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -30,8 +31,7 @@ fun EventsScreen(
     viewModel: EventsViewModel = viewModel()
 ) {
     val events by viewModel.events.collectAsState()
-    val devices by viewModel.devices.collectAsState()
-    val selectedDevice by viewModel.selectedDevice.collectAsState()
+    val selectedType by viewModel.selectedType.collectAsState()
     
     var expanded by remember { mutableStateOf(false) }
     var clearMenuExpanded by remember { mutableStateOf(false) }
@@ -44,14 +44,20 @@ fun EventsScreen(
                     Box(modifier = Modifier.padding(end = 8.dp)) {
                         TextButton(onClick = { expanded = true }) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
+                                val filterText = when (selectedType) {
+                                    "CALL", "VOIP MISSED CALL", "SYSTEM MISSED CALL", "VOIP ACTIVE CALL" -> "Calls"
+                                    "SMS" -> "SMS"
+                                    "NOTIFICATION" -> "App Alerts"
+                                    else -> "All Events"
+                                }
                                 Text(
-                                    text = selectedDevice ?: "All Devices",
+                                    text = filterText,
                                     style = MaterialTheme.typography.labelLarge,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.widthIn(max = 120.dp)
                                 )
-                                Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                                Icon(Icons.Default.FilterList, contentDescription = null, modifier = Modifier.size(18.dp).padding(start = 4.dp))
                             }
                         }
                         DropdownMenu(
@@ -59,23 +65,37 @@ fun EventsScreen(
                             onDismissRequest = { expanded = false }
                         ) {
                             DropdownMenuItem(
-                                text = { Text("All Devices") },
+                                text = { Text("All Events") },
                                 onClick = {
-                                    viewModel.setSelectedDevice(null)
+                                    viewModel.setSelectedType(null)
                                     expanded = false
                                 },
-                                leadingIcon = { Icon(Icons.Default.Devices, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                                leadingIcon = { Icon(Icons.Default.AllInclusive, contentDescription = null, modifier = Modifier.size(18.dp)) }
                             )
-                            devices.forEach { device ->
-                                DropdownMenuItem(
-                                    text = { Text(device) },
-                                    onClick = {
-                                        viewModel.setSelectedDevice(device)
-                                        expanded = false
-                                    },
-                                    leadingIcon = { Icon(Icons.Default.PhoneAndroid, contentDescription = null, modifier = Modifier.size(18.dp)) }
-                                )
-                            }
+                            DropdownMenuItem(
+                                text = { Text("Calls") },
+                                onClick = {
+                                    viewModel.setSelectedType("CALL") 
+                                    expanded = false
+                                },
+                                leadingIcon = { Icon(Icons.Default.Call, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("SMS") },
+                                onClick = {
+                                    viewModel.setSelectedType("SMS")
+                                    expanded = false
+                                },
+                                leadingIcon = { Icon(Icons.Default.Sms, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("App Alerts") },
+                                onClick = {
+                                    viewModel.setSelectedType("NOTIFICATION")
+                                    expanded = false
+                                },
+                                leadingIcon = { Icon(Icons.Default.Notifications, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                            )
                         }
                     }
 
@@ -95,19 +115,6 @@ fun EventsScreen(
                                 },
                                 leadingIcon = { Icon(Icons.Default.DeleteForever, contentDescription = null, modifier = Modifier.size(18.dp)) }
                             )
-                            if (devices.isNotEmpty()) {
-                                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                                devices.forEach { device ->
-                                    DropdownMenuItem(
-                                        text = { Text("Clear $device") },
-                                        onClick = {
-                                            viewModel.clearEventsForDevice(device)
-                                            clearMenuExpanded = false
-                                        },
-                                        leadingIcon = { Icon(Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp)) }
-                                    )
-                                }
-                            }
                         }
                     }
                 }
@@ -147,23 +154,33 @@ fun EventCard(event: EventEntity) {
     var appLabel: String? = null
     var packageName: String? = null
 
-    if (event.type == "NOTIFICATION" && event.data.contains("|")) {
+    // Unified Pipe-Delimited Parsing
+    if (event.data.contains("|")) {
         val parts = event.data.split("|", limit = 3)
         if (parts.size == 3) {
             appLabel = parts[0]
             packageName = parts[1]
             displayData = parts[2]
         }
-    } else if (event.type == "CALL" && event.data.startsWith("WhatsApp Call")) {
-        appLabel = "WhatsApp"
-        packageName = "com.whatsapp"
+    }
+
+    // Special handling for VOIP tags if parsing failed or for specific labeling
+    if (appLabel == null) {
+        if (event.type.contains("VOIP")) {
+            appLabel = "VoIP App"
+        } else if (event.type == "SYSTEM MISSED CALL") {
+            appLabel = "System Phone"
+        }
     }
     
-    val typeColor = when (event.type) {
-        "CALL" -> Color(0xFF2196F3) // Blue
-        "SMS" -> Color(0xFF4CAF50)  // Green
-        "SYNC ERROR" -> MaterialTheme.colorScheme.error
-        else -> Color(0xFF9C27B0)   // Purple for Notifications
+    val isMissedCall = event.type.contains("MISSED")
+    
+    val typeColor = when {
+        event.type == "SYNC ERROR" -> MaterialTheme.colorScheme.error
+        event.type == "SMS" -> Color(0xFF4CAF50)
+        isMissedCall -> Color(0xFFF44336) // Red for Missed
+        event.type.contains("CALL") -> Color(0xFF2196F3) // Blue for Active
+        else -> Color(0xFF9C27B0) // Purple for Notifications
     }
 
     Card(
@@ -196,10 +213,11 @@ fun EventCard(event: EventEntity) {
                     )
                 } else {
                     Icon(
-                        imageVector = when (event.type) {
-                            "SMS" -> Icons.Default.Sms
-                            "CALL" -> Icons.Default.Call
-                            "SYNC ERROR" -> Icons.Default.SyncProblem
+                        imageVector = when {
+                            event.type == "SMS" -> Icons.Default.Sms
+                            isMissedCall -> Icons.AutoMirrored.Filled.PhoneMissed
+                            event.type.contains("CALL") -> Icons.Default.Call
+                            event.type == "SYNC ERROR" -> Icons.Default.SyncProblem
                             else -> Icons.Default.Notifications
                         },
                         contentDescription = null,
@@ -217,7 +235,7 @@ fun EventCard(event: EventEntity) {
                         fontWeight = FontWeight.Bold,
                         color = if (appLabel != null) MaterialTheme.colorScheme.onSurface else typeColor
                     )
-                    if (packageName != null) {
+                    if (packageName != null && packageName != "com.android.server.telecom") {
                         Text(
                             text = packageName,
                             style = MaterialTheme.typography.labelSmall,
@@ -227,17 +245,19 @@ fun EventCard(event: EventEntity) {
                     }
                 }
                 
-                if (event.sourceDevice != null) {
+                // Secondary Type Label
+                if (event.type != "NOTIFICATION" && event.type != "SMS") {
                     Surface(
-                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        color = typeColor.copy(alpha = 0.1f),
                         shape = MaterialTheme.shapes.extraSmall
                     ) {
                         Text(
-                            text = event.sourceDevice,
+                            text = event.type,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                            style = MaterialTheme.typography.labelSmall,
+                            color = typeColor,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }
@@ -276,7 +296,7 @@ fun EventCard(event: EventEntity) {
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     val statusText = when (event.syncStatus) {
-                        SyncStatus.SENT -> "Sent"
+                        SyncStatus.SENT -> "Captured"
                         SyncStatus.RECEIVED -> "Synced"
                         SyncStatus.FAILED -> "Failed"
                         SyncStatus.PENDING -> "Pending"

@@ -17,6 +17,7 @@ class EventsViewModel(
 
     // Reactive selection from Navigation SavedStateHandle
     val selectedDevice: StateFlow<String?> = savedStateHandle.getStateFlow("deviceName", null)
+    val selectedType: StateFlow<String?> = savedStateHandle.getStateFlow("eventType", null)
 
     val devices = database.dao().getAllEvents()
         .map { events -> 
@@ -28,8 +29,15 @@ class EventsViewModel(
             initialValue = emptyList()
         )
 
-    val events = combine(database.dao().getAllEvents(), selectedDevice) { allEvents, filter ->
-        if (filter == null) allEvents else allEvents.filter { it.sourceDevice == filter }
+    val events = combine(database.dao().getAllEvents(), selectedDevice, selectedType) { allEvents, deviceFilter, typeFilter ->
+        allEvents.filter { event ->
+            val matchesDevice = deviceFilter == null || event.sourceDevice == deviceFilter
+            val matchesType = typeFilter == null || when(typeFilter) {
+                "CALL" -> event.type.contains("CALL")
+                else -> event.type == typeFilter
+            }
+            matchesDevice && matchesType
+        }
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -38,6 +46,10 @@ class EventsViewModel(
 
     fun setSelectedDevice(deviceName: String?) {
         savedStateHandle["deviceName"] = deviceName
+    }
+
+    fun setSelectedType(type: String?) {
+        savedStateHandle["eventType"] = type
     }
 
     fun clearEvents() {
