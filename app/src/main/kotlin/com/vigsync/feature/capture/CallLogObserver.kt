@@ -50,6 +50,7 @@ class CallLogObserver(
 
     override fun onChange(selfChange: Boolean, uri: Uri?) {
         super.onChange(selfChange, uri)
+        Log.d("VigSync", "Call Log changed, processing...")
         processNewCalls()
     }
 
@@ -57,7 +58,7 @@ class CallLogObserver(
         observerScope.launch {
             processingMutex.withLock {
                 try {
-                    delay(2500) // Wait for system to write to log
+                    delay(3000) 
 
                     if (lastProcessedEntryId == -1L) {
                         seedLastProcessedId()
@@ -65,16 +66,18 @@ class CallLogObserver(
                     }
 
                     val newCalls = queryNewCalls(lastProcessedEntryId)
+                    Log.d("VigSync", "Found ${newCalls.size} new call entries since $lastProcessedEntryId")
+
                     for (call in newCalls) {
+                        lastProcessedEntryId = call.entryId
+                        preferences.edit().putLong("last_processed_call_id", lastProcessedEntryId).apply()
+
                         if (call.callType == "Missed") {
                             val simLabel = getSimLabel(call.subscriptionId)
                             val enrichedData = "[$simLabel] From: ${call.number}"
                             Log.d("VigSync", "System Missed Call Captured: $enrichedData")
                             SyncManager.getInstance(appContext).publishEvent("SYSTEM MISSED CALL", enrichedData)
                         }
-                        
-                        lastProcessedEntryId = call.entryId
-                        preferences.edit().putLong("last_processed_call_id", lastProcessedEntryId).apply()
                     }
                 } catch (error: Exception) {
                     Log.e("CallLogObserver", "Call processing error", error)
@@ -84,7 +87,7 @@ class CallLogObserver(
     }
 
     private fun getSimLabel(subId: String?): String {
-        if (subId == null) return "Unknown SIM"
+        if (subId == null) return "SIM Unknown"
         
         val sm = appContext.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? SubscriptionManager
             ?: return "SIM $subId"
@@ -121,6 +124,7 @@ class CallLogObserver(
             )?.use { cursor ->
                 lastProcessedEntryId = if (cursor.moveToFirst()) cursor.getLong(0) else 0L
                 preferences.edit().putLong("last_processed_call_id", lastProcessedEntryId).apply()
+                Log.d("CallLogObserver", "Seeded lastProcessedEntryId: $lastProcessedEntryId")
             }
         } catch (error: Exception) {
             Log.e("CallLogObserver", "Failed to seed call baseline", error)
@@ -159,17 +163,13 @@ class CallLogObserver(
         var subId: String? = null
         try {
             val idx = getColumnIndex("subscription_id")
-            if (idx != -1) {
-                subId = getString(idx)
-            }
+            if (idx != -1) subId = getString(idx)
         } catch (e: Exception) {}
         
         if (subId == null) {
             try {
                 val idx = getColumnIndex("phone_account_id")
-                if (idx != -1) {
-                    subId = getString(idx)
-                }
+                if (idx != -1) subId = getString(idx)
             } catch (e: Exception) {}
         }
 
