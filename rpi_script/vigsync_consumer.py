@@ -24,14 +24,12 @@ def log_mem(message, level="INFO"):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     entry = f"[{timestamp}] [{level}] {message}"
     
-    # 1. Print to stdout for real-time viewing (captured by systemd or manager)
+    # 1. Print to stdout for real-time viewing
     print(entry)
     sys.stdout.flush()
 
     # 2. Add to memory buffer
     memory_logs.append(entry)
-
-    # Keep memory usage bounded
     if len(memory_logs) > MAX_MEM_LOGS:
         memory_logs.pop(0)
 
@@ -43,7 +41,6 @@ def flush_logs():
     global last_flush_time
     if not memory_logs:
         return
-
     try:
         with open(LOG_FILE, "a", encoding='utf-8') as f:
             for entry in memory_logs:
@@ -51,36 +48,50 @@ def flush_logs():
         memory_logs.clear()
         last_flush_time = time.time()
     except Exception as e:
-        # Fallback to stderr if SD card is read-only or failing
         sys.stderr.write(f"Failed to flush logs: {e}\n")
 
 def pull_config_via_adb():
-    log_mem(f"Searching for {CONFIG_FILE} on connected ADB device...")
+    """Forces a fresh config pull from the connected phone, overwriting local stale data."""
+    log_mem(f"Pulling fresh configuration from ADB device...")
     phone_config_path = f"{ADB_PHONE_PATH}{CONFIG_FILE}"
+    
     try:
+        # Strategy A: Use CAT to read directly (fastest, most reliable for metadata)
         result = subprocess.run(["adb", "shell", f"cat {phone_config_path}"], capture_output=True, text=True, encoding='utf-8')
         if result.returncode == 0 and result.stdout.strip():
             with open(CONFIG_FILE, "w", encoding='utf-8') as f:
                 f.write(result.stdout)
-            log_mem(f"Successfully retrieved {CONFIG_FILE} from phone.")
+            
+            # Parse quickly to verify we got the right data
+            try:
+                data = json.loads(result.stdout)
+                device = data.get("device_name", "Unknown")
+                log_mem(f"Successfully retrieved config for device: {device}")
+                return True
+            except:
+                log_mem("Retrieved config but JSON is invalid.", "WARNING")
+                return True # Still might be usable or overwrites bad file
+                
+        # Strategy B: Standard pull
+        result = subprocess.run(["adb", "pull", phone_config_path, "."], capture_output=True, text=True)
+        if result.returncode == 0:
+            log_mem("Successfully pulled configuration via ADB pull.")
             return True
         else:
-            result = subprocess.run(["adb", "pull", phone_config_path, "."], capture_output=True, text=True)
-            if result.returncode == 0:
-                log_mem(f"Successfully pulled {CONFIG_FILE} from phone via fallback.")
-                return True
-            else:
-                log_mem(f"ADB Pull failed: {result.stderr.strip()}", "ERROR")
-                return False
+            log_mem(f"ADB Pull failed: {result.stderr.strip()}", "WARNING")
+            return False
+            
     except Exception as e:
-        log_mem(f"Error retrieving config: {e}", "ERROR")
+        log_mem(f"Error pulling configuration: {e}", "ERROR")
         return False
 
 def load_config():
+    """Always tries to pull updated config on load to avoid stale device ID issues."""
+    pull_config_via_adb()
+    
     if not os.path.exists(CONFIG_FILE):
-        if not pull_config_via_adb():
-            log_mem(f"Config file {CONFIG_FILE} not found locally or on phone.", "ERROR")
-            sys.exit(1)
+        log_mem(f"Config file {CONFIG_FILE} not found. Please ensure the app is running on the phone.", "ERROR")
+        sys.exit(1)
 
     with open(CONFIG_FILE, "r", encoding='utf-8') as f:
         return json.load(f)
@@ -95,8 +106,10 @@ def run_adb_tail_stream(config, mqtt_client):
     log_path = config.get("export_file_path")
     prefix = config.get("topic_prefix", "vigsync")
     device_id = config.get("device_id")
+    device_name = config.get("device_name", "Unknown")
 
-    log_mem(f"Starting real-time stream for: {log_path}")
+    log_mem(f"Monitoring device: {device_name} ({device_id})")
+    log_mem(f"ADB Stream Path: {log_path}")
 
     adb_command = ["adb", "shell", f"tail -n 0 -f {log_path}"]
 
@@ -112,14 +125,13 @@ def run_adb_tail_stream(config, mqtt_client):
         )
 
         while True:
-            # Check if we need to flush logs (6 hours)
             if time.time() - last_flush_time > FLUSH_INTERVAL:
                 flush_logs()
 
             line = process.stdout.readline()
             if not line:
                 if process.poll() is not None:
-                    log_mem("ADB stream process died. Retrying in 5s...", "ERROR")
+                    log_mem("ADB stream process died. Check USB connection.", "ERROR")
                     time.sleep(5)
                     return
                 continue
@@ -138,23 +150,27 @@ def run_adb_tail_stream(config, mqtt_client):
         time.sleep(2)
 
 def daemonize():
-    """Simple background execution without full double-fork for PC/RPi compatibility."""
     if os.path.exists(PID_FILE):
-        log_mem("Consumer already running (PID file exists).", "ERROR")
-        sys.exit(1)
-
-    # Save PID
+        # Check if process actually exists
+        try:
+            with open(PID_FILE, "r") as f:
+                pid = int(f.read().strip())
+            os.kill(pid, 0)
+            log_mem(f"Consumer already running (PID: {pid}).", "ERROR")
+            sys.exit(1)
+        except (ProcessLookupError, ValueError, OSError):
+            os.remove(PID_FILE)
+    
     with open(PID_FILE, "w") as f:
         f.write(str(os.getpid()))
-
-    # Clean exit handler
+    
     def signal_handler(sig, frame):
         log_mem("Shutdown signal received.")
         flush_logs()
         if os.path.exists(PID_FILE):
             os.remove(PID_FILE)
         sys.exit(0)
-
+    
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
 
@@ -169,6 +185,7 @@ def run():
     client.on_connect = on_connect
 
     try:
+        # Increase keepalive to 60s for stability
         client.connect(config["broker_url"], config["broker_port"], 60)
     except Exception as e:
         log_mem(f"Could not connect to broker: {e}", "ERROR")
