@@ -75,7 +75,7 @@ class VigNotificationListener : NotificationListenerService() {
             val category = sbn.notification.category
             val isCallCategory = category == Notification.CATEGORY_CALL || category == "call"
             
-            // Heuristic for VoIP missed/lost calls across various apps
+            // Heuristic for VoIP missed/lost calls
             val isMissed = title.contains("Missed", ignoreCase = true) || 
                            text.contains("Missed", ignoreCase = true) ||
                            title.contains("Lost", ignoreCase = true) ||
@@ -85,17 +85,17 @@ class VigNotificationListener : NotificationListenerService() {
                 eventType = "VOIP MISSED CALL"
                 eventData = "[$appLabel] From: $title"
             } else if (isCallCategory || text.contains("Ongoing call", ignoreCase = true)) {
-                // Label correctly so it's not a generic notification
                 eventType = "VOIP ACTIVE CALL"
                 eventData = "[$appLabel] Active Call: $title"
-                
-                // Optional: skip active calls if user only wants missed
-                // Log.d("VigSync", "Ignored active VoIP call")
-                // return@launch 
             }
 
             Log.d("VigSync", "Event Captured ($eventType) from $packageName: $title")
             SyncManager.getInstance(applicationContext).publishEvent(eventType, eventData)
+            
+            // --- IMPORTANT: Return after special detection to avoid fall-through duplication ---
+            if (eventType != "NOTIFICATION") {
+                return@launch 
+            }
         }
     }
 
@@ -158,10 +158,9 @@ class VigNotificationListener : NotificationListenerService() {
     }
 
     private fun isDuplicate(key: String, now: Long): Boolean {
-        recentNotificationWindows.entries.removeIf { now - it.value > DEDUPE_WINDOW_MILLIS }
-        
-        // Thread-safe check-and-set
+        // Atomic cleanup and check-and-set
         synchronized(recentNotificationWindows) {
+            recentNotificationWindows.entries.removeIf { now - it.value > DEDUPE_WINDOW_MILLIS }
             val lastSeen = recentNotificationWindows[key]
             if (lastSeen != null && (now - lastSeen) <= DEDUPE_WINDOW_MILLIS) {
                 return true
