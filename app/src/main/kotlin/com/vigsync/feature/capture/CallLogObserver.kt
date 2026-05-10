@@ -4,15 +4,16 @@ import android.content.Context
 import android.database.ContentObserver
 import android.database.Cursor
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.CallLog
+import android.telephony.SubscriptionManager
 import android.util.Log
 import com.vigsync.core.SyncManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -45,7 +46,6 @@ class CallLogObserver(
 
     fun unregister() {
         appContext.contentResolver.unregisterContentObserver(this)
-        observerScope.cancel()
     }
 
     override fun onChange(selfChange: Boolean, uri: Uri?) {
@@ -66,12 +66,11 @@ class CallLogObserver(
 
                     val newCalls = queryNewCalls(lastProcessedEntryId)
                     for (call in newCalls) {
-                        // --- FOCUS ON MISSED CALLS ONLY ---
                         if (call.callType == "Missed") {
-                            Log.d("VigSync", "System Missed Call Captured: ${call.number}")
-                            SyncManager.getInstance(appContext).publishEvent("SYSTEM MISSED CALL", "From: ${call.number}")
-                        } else {
-                            Log.d("VigSync", "Ignored non-missed call log entry: ${call.callType}")
+                            val simLabel = getSimLabel(call.subscriptionId)
+                            val enrichedData = "[$simLabel] From: ${call.number}"
+                            Log.d("VigSync", "System Missed Call Captured: $enrichedData")
+                            SyncManager.getInstance(appContext).publishEvent("SYSTEM MISSED CALL", enrichedData)
                         }
                         
                         lastProcessedEntryId = call.entryId
@@ -81,6 +80,33 @@ class CallLogObserver(
                     Log.e("CallLogObserver", "Call processing error", error)
                 }
             }
+        }
+    }
+
+    private fun getSimLabel(subId: String?): String {
+        if (subId == null) return "Unknown SIM"
+        
+        val sm = appContext.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? SubscriptionManager
+            ?: return "SIM $subId"
+            
+        return try {
+            val canReadPhoneState = androidx.core.content.ContextCompat.checkSelfPermission(
+                appContext, android.Manifest.permission.READ_PHONE_STATE
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            
+            if (canReadPhoneState) {
+                val id = subId.toIntOrNull()
+                if (id != null) {
+                    val info = sm.getActiveSubscriptionInfo(id)
+                    if (info != null) {
+                        val carrier = info.carrierName?.toString() ?: "Unknown Carrier"
+                        return "SIM ${info.simSlotIndex + 1} - $carrier"
+                    }
+                }
+            }
+            "SIM $subId"
+        } catch (e: Exception) {
+            "SIM $subId"
         }
     }
 
@@ -129,12 +155,32 @@ class CallLogObserver(
         val number = getString(getColumnIndexOrThrow(CallLog.Calls.NUMBER)).orEmpty()
         val typeValue = getInt(getColumnIndexOrThrow(CallLog.Calls.TYPE))
         val durationSeconds = getLong(getColumnIndexOrThrow(CallLog.Calls.DURATION))
+        
+        // Use string literals for columns to avoid SDK version issues in some build environments
+        val subIdColumn = if (Build.VERSION.SDK_INT >= 24) "subscription_id" else "phone_account_id"
+        var subId: String? = null
+        try {
+            val idx = getColumnIndex(subIdColumn)
+            if (idx != -1) {
+                subId = getString(idx)
+            }
+        } catch (e: Exception) {}
+        
+        if (subId == null) {
+            try {
+                val idx = getColumnIndex("phone_account_id")
+                if (idx != -1) {
+                    subId = getString(idx)
+                }
+            } catch (e: Exception) {}
+        }
 
         return CallLogEvent(
             entryId = id,
             number = number,
             callType = mapCallType(typeValue),
-            durationSeconds = durationSeconds
+            durationSeconds = durationSeconds,
+            subscriptionId = subId
         )
     }
 
@@ -152,5 +198,6 @@ data class CallLogEvent(
     val entryId: Long,
     val number: String,
     val callType: String,
-    val durationSeconds: Long
+    val durationSeconds: Long,
+    val subscriptionId: String?
 )
