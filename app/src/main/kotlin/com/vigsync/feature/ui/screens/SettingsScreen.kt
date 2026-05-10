@@ -176,12 +176,14 @@ fun ServerConfigTab(viewModel: SettingsViewModel) {
     val savedUser by viewModel.brokerUser.collectAsState()
     val savedPass by viewModel.brokerPass.collectAsState()
     val savedPrefix by viewModel.topicPrefix.collectAsState()
+    val savedTls by viewModel.useTls.collectAsState()
 
     var url by remember(savedUrl) { mutableStateOf(savedUrl) }
     var port by remember(savedPort) { mutableStateOf(savedPort) }
     var user by remember(savedUser) { mutableStateOf(savedUser) }
     var pass by remember(savedPass) { mutableStateOf(savedPass) }
     var prefix by remember(savedPrefix) { mutableStateOf(savedPrefix) }
+    var tls by remember(savedTls) { mutableStateOf(savedTls) }
 
     Column(
         modifier = Modifier
@@ -237,10 +239,15 @@ fun ServerConfigTab(viewModel: SettingsViewModel) {
             supportingText = { Text("Final topic: $prefix/devices/[device_id]") }
         )
 
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = tls, onCheckedChange = { tls = it })
+            Text("Use SSL/TLS Encryption")
+        }
+
         Spacer(modifier = Modifier.height(24.dp))
 
         Button(
-            onClick = { viewModel.saveServerConfig(url, port, user, pass, prefix) },
+            onClick = { viewModel.saveServerConfig(url, port, user, pass, prefix, tls) },
             modifier = Modifier.fillMaxWidth()
         ) {
             Icon(Icons.Default.Save, contentDescription = null)

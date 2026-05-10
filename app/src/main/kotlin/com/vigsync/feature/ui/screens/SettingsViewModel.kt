@@ -27,6 +27,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val brokerUser = appPreferences.brokerUser.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), "")
     val brokerPass = appPreferences.brokerPass.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), "")
     val topicPrefix = appPreferences.topicPrefix.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), "vigsync")
+    val useTls = appPreferences.useTls.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), false)
 
     val notifCalls = appPreferences.notifCalls.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), true)
     val notifSms = appPreferences.notifSms.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), true)
@@ -50,9 +51,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }.sortedBy { it.name }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    fun saveServerConfig(url: String, port: String, user: String, pass: String, prefix: String) {
+    fun saveServerConfig(url: String, port: String, user: String, pass: String, prefix: String, tls: Boolean) {
         viewModelScope.launch {
-            appPreferences.saveServerConfig(url, port, user, pass, prefix)
+            appPreferences.saveServerConfig(url, port, user, pass, prefix, tls)
             SyncManager.getInstance(getApplication()).getServerConfigManager().generateConfigFile()
         }
     }
