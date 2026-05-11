@@ -122,9 +122,9 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    val deviceEventCounts: StateFlow<Map<String, Int>> = database.dao().getAllEvents()
-        .map { events ->
-            events.groupBy { it.sourceDevice ?: "Unknown" }
+    val deviceEventCounts: StateFlow<Map<String, Int>> = database.dao().getAllEventsWithLabels()
+        .map { items ->
+            items.groupBy { it.resolvedDeviceName }
                 .mapValues { it.value.size }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())

@@ -347,10 +347,14 @@ class SyncManager private constructor(context: Context) {
                 timestamp = msg.timestamp,
                 syncStatus = if (isLocal) com.vigsync.core.models.SyncStatus.SENT else com.vigsync.core.models.SyncStatus.RECEIVED,
                 direction = if (isLocal) com.vigsync.core.models.EventDirection.LOCAL else com.vigsync.core.models.EventDirection.REMOTE,
-                sourceDevice = msg.senderName,
+                sourceDeviceId = msg.senderId,
+                sourceDeviceName = msg.senderName,
                 payloadHash = hash
             )
             database.dao().insertEvent(event)
+
+            val deviceStatus = msg.senderId?.let { database.dao().getDeviceStatus(it) }
+            val resolvedName = deviceStatus?.customLabel ?: msg.senderName ?: "Unknown"
 
             if (!isLocal) {
                 val shouldNotify = when (msg.type) {
@@ -361,9 +365,9 @@ class SyncManager private constructor(context: Context) {
 
                 if (shouldNotify) {
                     showSyncNotification(
-                        title = "${msg.type} from ${msg.senderName}",
+                        title = "${msg.type} from $resolvedName",
                         message = decryptedData,
-                        deviceName = msg.senderName ?: "Unknown"
+                        deviceName = resolvedName
                     )
                 }
             }

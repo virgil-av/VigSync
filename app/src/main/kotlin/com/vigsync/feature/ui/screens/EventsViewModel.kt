@@ -19,9 +19,9 @@ class EventsViewModel(
     val selectedDevice: StateFlow<String?> = savedStateHandle.getStateFlow("deviceName", null)
     val selectedType: StateFlow<String?> = savedStateHandle.getStateFlow("eventType", null)
 
-    val devices = database.dao().getAllEvents()
-        .map { events -> 
-            events.mapNotNull { it.sourceDevice }.distinct().sorted()
+    val devices = database.dao().getAllEventsWithLabels()
+        .map { items -> 
+            items.map { it.resolvedDeviceName }.distinct().sorted()
         }
         .stateIn(
             scope = viewModelScope,
@@ -29,18 +29,18 @@ class EventsViewModel(
             initialValue = emptyList()
         )
 
-    val events = combine(database.dao().getAllEvents(), selectedDevice, selectedType) { allEvents, deviceFilter, typeFilter ->
-        val filtered = allEvents.filter { event ->
-            val matchesDevice = deviceFilter == null || event.sourceDevice == deviceFilter
+    val events = combine(database.dao().getAllEventsWithLabels(), selectedDevice, selectedType) { allEvents, deviceFilter, typeFilter ->
+        val filtered = allEvents.filter { item ->
+            val matchesDevice = deviceFilter == null || item.resolvedDeviceName == deviceFilter
             val matchesType = typeFilter == null || when(typeFilter) {
-                "CALL" -> event.type.contains("CALL")
-                else -> event.type == typeFilter
+                "CALL" -> item.event.type.contains("CALL")
+                else -> item.event.type == typeFilter
             }
             matchesDevice && matchesType
         }
         
         // Deduplication Logic: Group by timestamp and data, take first of each group
-        filtered.distinctBy { it.timestamp to it.data }
+        filtered.distinctBy { it.event.timestamp to it.event.data }
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),

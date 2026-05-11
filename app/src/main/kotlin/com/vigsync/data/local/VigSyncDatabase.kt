@@ -53,20 +53,36 @@ interface VigSyncDao {
     @Query("DELETE FROM device_status WHERE deviceId = :deviceId")
     suspend fun deleteDeviceStatus(deviceId: String)
 
-    @Query("SELECT COUNT(*) FROM events WHERE sourceDevice = :deviceName")
-    fun getEventCountForDevice(deviceName: String): Flow<Int>
+    @Query("""
+        SELECT e.*, d.customLabel as deviceAlias 
+        FROM events e 
+        LEFT JOIN device_status d ON e.sourceDeviceId = d.deviceId 
+        ORDER BY e.timestamp DESC
+    """)
+    fun getAllEventsWithLabels(): Flow<List<EventWithLabel>>
+
+    @Query("SELECT COUNT(*) FROM events WHERE sourceDeviceId = :deviceId OR sourceDeviceName = :deviceId")
+    fun getEventCountForDevice(deviceId: String): Flow<Int>
 
     @Query("DELETE FROM events")
     suspend fun clearAllEvents()
 
-    @Query("DELETE FROM events WHERE sourceDevice = :deviceName")
-    suspend fun clearEventsForDevice(deviceName: String)
+    @Query("DELETE FROM events WHERE sourceDeviceId = :deviceId OR sourceDeviceName = :deviceId")
+    suspend fun clearEventsForDevice(deviceId: String)
 
     @Query("SELECT version FROM host_protocols WHERE host = :host")
     suspend fun getProtocolForHost(host: String): Int?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveHostProtocol(hostProtocol: HostProtocolEntity)
+}
+
+data class EventWithLabel(
+    @Embedded val event: EventEntity,
+    val deviceAlias: String?
+) {
+    val resolvedDeviceName: String
+        get() = deviceAlias ?: event.sourceDeviceName ?: "Unknown"
 }
 
 class Converters {

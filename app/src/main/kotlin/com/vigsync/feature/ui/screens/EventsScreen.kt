@@ -22,6 +22,7 @@ import androidx.core.graphics.drawable.toBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vigsync.data.local.EventEntity
+import com.vigsync.data.local.EventWithLabel
 import com.vigsync.core.models.SyncStatus
 import java.text.SimpleDateFormat
 import java.util.*
@@ -126,8 +127,8 @@ fun EventsScreen(
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(events) { event ->
-                        EventCard(event)
+                    items(events) { item ->
+                        EventCard(item)
                     }
                 }
             }
@@ -167,7 +168,8 @@ fun EventTypeFilters(
 }
 
 @Composable
-fun EventCard(event: EventEntity) {
+fun EventCard(item: EventWithLabel) {
+    val event = item.event
     val context = LocalContext.current
     val pm = context.packageManager
     val timeFormatter = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
@@ -228,7 +230,7 @@ fun EventCard(event: EventEntity) {
         )
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
-            // Device badge in top-right
+            // Device badge in top-right (Resolved Alias/Name)
             Surface(
                 color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
                 shape = MaterialTheme.shapes.extraSmall,
@@ -237,7 +239,7 @@ fun EventCard(event: EventEntity) {
                     .padding(8.dp)
             ) {
                 Text(
-                    text = event.sourceDevice ?: "Unknown",
+                    text = item.resolvedDeviceName,
                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSecondaryContainer,
