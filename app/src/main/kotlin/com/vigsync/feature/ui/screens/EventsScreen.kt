@@ -181,19 +181,32 @@ fun EventCard(event: EventEntity) {
     if (event.data.contains("|")) {
         val parts = event.data.split("|", limit = 3)
         if (parts.size == 3) {
-            appLabel = parts[0]
             packageName = parts[1]
             displayData = parts[2]
+            
+            // Extract app name from package instead of using the raw label
+            appLabel = remember(packageName) {
+                try {
+                    val info = pm.getApplicationInfo(packageName, 0)
+                    pm.getApplicationLabel(info).toString()
+                } catch (_: Exception) {
+                    parts[0] // fallback to the raw label if lookup fails
+                }
+            }
         }
     }
 
-    // Special handling for VOIP tags if parsing failed
-    if (appLabel == null) {
-        if (event.type.contains("VOIP")) {
-            appLabel = "VoIP App"
-        } else if (event.type == "SYSTEM MISSED CALL") {
-            appLabel = "System Phone"
+    // Generic Title Logic
+    val displayTitle = when {
+        event.type.contains("MISSED") -> "Missed Call"
+        event.type.contains("CALL") -> {
+            if (displayData.contains("Incoming", ignoreCase = true)) "Incoming Call"
+            else if (displayData.contains("Outgoing", ignoreCase = true)) "Outgoing Call"
+            else "Call"
         }
+        event.type == "SMS" -> "SMS Message"
+        event.type == "NOTIFICATION" -> appLabel ?: "App Alert"
+        else -> event.type
     }
     
     val isMissedCall = event.type.contains("MISSED")
@@ -214,156 +227,143 @@ fun EventCard(event: EventEntity) {
             containerColor = MaterialTheme.colorScheme.surface
         )
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
+        Box(modifier = Modifier.fillMaxWidth()) {
+            // Device badge in top-right
+            Surface(
+                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
+                shape = MaterialTheme.shapes.extraSmall,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
             ) {
-                // App Icon or Type Icon
-                val appIcon: androidx.compose.ui.graphics.ImageBitmap? = remember(packageName) {
-                    packageName?.let {
-                        try {
-                            pm.getApplicationIcon(it).toBitmap().asImageBitmap()
-                        } catch (_: Exception) { null }
+                Text(
+                    text = event.sourceDevice ?: "Unknown",
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    fontSize = 9.sp
+                )
+            }
+
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    // App Icon or Type Icon
+                    val appIcon: androidx.compose.ui.graphics.ImageBitmap? = remember(packageName) {
+                        packageName?.let {
+                            try {
+                                pm.getApplicationIcon(it).toBitmap().asImageBitmap()
+                            } catch (_: Exception) { null }
+                        }
                     }
-                }
 
-                if (appIcon != null) {
-                    androidx.compose.foundation.Image(
-                        bitmap = appIcon,
-                        contentDescription = null,
-                        modifier = Modifier.size(32.dp)
-                    )
-                } else {
-                    Icon(
-                        imageVector = when {
-                            event.type == "SMS" -> Icons.Default.Sms
-                            isMissedCall -> Icons.AutoMirrored.Filled.PhoneMissed
-                            event.type.contains("CALL") -> Icons.Default.Call
-                            event.type == "SYNC ERROR" -> Icons.Default.SyncProblem
-                            else -> Icons.Default.Notifications
-                        },
-                        contentDescription = null,
-                        tint = typeColor,
-                        modifier = Modifier.size(32.dp)
-                    )
-                }
+                    if (appIcon != null) {
+                        androidx.compose.foundation.Image(
+                            bitmap = appIcon,
+                            contentDescription = null,
+                            modifier = Modifier.size(32.dp)
+                        )
+                    } else {
+                        Icon(
+                            imageVector = when {
+                                event.type == "SMS" -> Icons.Default.Sms
+                                isMissedCall -> Icons.AutoMirrored.Filled.PhoneMissed
+                                event.type.contains("CALL") -> Icons.Default.Call
+                                event.type == "SYNC ERROR" -> Icons.Default.SyncProblem
+                                else -> Icons.Default.Notifications
+                            },
+                            contentDescription = null,
+                            tint = typeColor,
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
 
-                Spacer(modifier = Modifier.width(12.dp))
+                    Spacer(modifier = Modifier.width(12.dp))
 
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = appLabel ?: event.type,
+                            text = displayTitle,
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            color = if (appLabel != null) MaterialTheme.colorScheme.onSurface else typeColor
+                            color = if (appLabel != null || event.type == "SMS") MaterialTheme.colorScheme.onSurface else typeColor
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        // Device tag
-                        Surface(
-                            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
-                            shape = MaterialTheme.shapes.extraSmall
-                        ) {
+                        // Show app label as subtitle if it's different from title
+                        if (appLabel != null && displayTitle != appLabel) {
                             Text(
-                                text = event.sourceDevice ?: "Unknown",
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                text = appLabel,
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                fontSize = 9.sp
+                                color = MaterialTheme.colorScheme.outline,
+                                fontSize = 10.sp
                             )
                         }
                     }
-                    if (packageName != null && packageName != "com.android.server.telecom") {
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Text(
+                    text = displayData,
+                    style = MaterialTheme.typography.bodyMedium,
+                    lineHeight = 20.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                if (event.errorMessage != null) {
+                    Text(
+                        text = event.errorMessage,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = time,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        val statusText = when (event.syncStatus) {
+                            SyncStatus.SENT -> "Captured"
+                            SyncStatus.RECEIVED -> "Synced"
+                            SyncStatus.FAILED -> "Failed"
+                            SyncStatus.PENDING -> "Pending"
+                        }
+                        
                         Text(
-                            text = packageName,
+                            text = statusText,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.outline,
-                            fontSize = 10.sp
+                            modifier = Modifier.padding(end = 4.dp)
+                        )
+                        
+                        Icon(
+                            imageVector = when (event.syncStatus) {
+                                SyncStatus.SENT -> Icons.Default.CheckCircle
+                                SyncStatus.RECEIVED -> Icons.Default.CloudDone
+                                SyncStatus.FAILED -> Icons.Default.Error
+                                SyncStatus.PENDING -> Icons.Default.Schedule
+                            },
+                            contentDescription = null,
+                            tint = when (event.syncStatus) {
+                                SyncStatus.SENT -> Color(0xFF4CAF50)
+                                SyncStatus.RECEIVED -> Color(0xFF2196F3)
+                                SyncStatus.FAILED -> MaterialTheme.colorScheme.error
+                                SyncStatus.PENDING -> MaterialTheme.colorScheme.outline
+                            },
+                            modifier = Modifier.size(14.dp)
                         )
                     }
-                }
-                
-                // Secondary Type Label
-                if (event.type != "NOTIFICATION" && event.type != "SMS") {
-                    Surface(
-                        color = typeColor.copy(alpha = 0.1f),
-                        shape = MaterialTheme.shapes.extraSmall
-                    ) {
-                        Text(
-                            text = event.type,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = typeColor,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Text(
-                text = displayData,
-                style = MaterialTheme.typography.bodyMedium,
-                lineHeight = 20.sp,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-
-            if (event.errorMessage != null) {
-                Text(
-                    text = event.errorMessage,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = time,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.outline
-                )
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    val statusText = when (event.syncStatus) {
-                        SyncStatus.SENT -> "Captured"
-                        SyncStatus.RECEIVED -> "Synced"
-                        SyncStatus.FAILED -> "Failed"
-                        SyncStatus.PENDING -> "Pending"
-                    }
-                    
-                    Text(
-                        text = statusText,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.outline,
-                        modifier = Modifier.padding(end = 4.dp)
-                    )
-                    
-                    Icon(
-                        imageVector = when (event.syncStatus) {
-                            SyncStatus.SENT -> Icons.Default.CheckCircle
-                            SyncStatus.RECEIVED -> Icons.Default.CloudDone
-                            SyncStatus.FAILED -> Icons.Default.Error
-                            SyncStatus.PENDING -> Icons.Default.Schedule
-                        },
-                        contentDescription = null,
-                        tint = when (event.syncStatus) {
-                            SyncStatus.SENT -> Color(0xFF4CAF50)
-                            SyncStatus.RECEIVED -> Color(0xFF2196F3)
-                            SyncStatus.FAILED -> MaterialTheme.colorScheme.error
-                            SyncStatus.PENDING -> MaterialTheme.colorScheme.outline
-                        },
-                        modifier = Modifier.size(14.dp)
-                    )
                 }
             }
         }

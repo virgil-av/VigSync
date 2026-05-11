@@ -30,7 +30,7 @@ class EventsViewModel(
         )
 
     val events = combine(database.dao().getAllEvents(), selectedDevice, selectedType) { allEvents, deviceFilter, typeFilter ->
-        allEvents.filter { event ->
+        val filtered = allEvents.filter { event ->
             val matchesDevice = deviceFilter == null || event.sourceDevice == deviceFilter
             val matchesType = typeFilter == null || when(typeFilter) {
                 "CALL" -> event.type.contains("CALL")
@@ -38,6 +38,9 @@ class EventsViewModel(
             }
             matchesDevice && matchesType
         }
+        
+        // Deduplication Logic: Group by timestamp and data, take first of each group
+        filtered.distinctBy { it.timestamp to it.data }
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
