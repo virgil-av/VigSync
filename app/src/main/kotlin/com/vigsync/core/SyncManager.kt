@@ -26,6 +26,7 @@ import com.vigsync.data.local.EventEntity
 import com.vigsync.data.local.VigSyncDatabase
 import com.vigsync.data.prefs.AppPreferences
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -59,6 +60,8 @@ class SyncManager private constructor(context: Context) {
 
     private val _pairedDevicesList = MutableStateFlow<List<Device>>(emptyList())
     val pairedDevicesList = _pairedDevicesList.asStateFlow()
+
+    private val processTrigger = Channel<Unit>(Channel.CONFLATED)
 
     companion object {
         @Volatile
@@ -102,6 +105,7 @@ class SyncManager private constructor(context: Context) {
                 val msg = Json.decodeFromString<RawMessage>(json)
                 val raw = com.vigsync.data.local.RawMessage(topic = topic, payload = json)
                 database.dao().insertRaw(raw)
+                processTrigger.trySend(Unit)
                 
                 val source = msg.senderName ?: "Unknown"
                 val type = if (topic.contains("/events/")) "event" else "status"
@@ -114,23 +118,32 @@ class SyncManager private constructor(context: Context) {
 
     fun startEventDrivenWorker() {
         scope.launch {
-            database.dao().getUnprocessedFlow()
-                .distinctUntilChanged()
-                .collect { messages ->
-                    messages.forEach { raw ->
+            for (trigger in processTrigger) {
                 try {
-                    val msg = Json.decodeFromString<RawMessage>(raw.payload)
-                    updateDeviceStatus(msg)
-                    if (raw.topic.contains("/events/")) {
-                        processIncomingEvent(msg)
+                    var messages = database.dao().getUnprocessedList()
+                    while (messages.isNotEmpty()) {
+                        messages.forEach { raw ->
+                            try {
+                                val msg = Json.decodeFromString<RawMessage>(raw.payload)
+                                updateDeviceStatus(msg)
+                                if (raw.topic.contains("/events/")) {
+                                    processIncomingEvent(msg)
+                                }
+                                database.dao().markAsProcessed(raw.id)
+                            } catch (e: Exception) {
+                                database.dao().markAsProcessed(raw.id)
+                            }
+                        }
+                        messages = database.dao().getUnprocessedList()
                     }
-                    database.dao().markAsProcessed(raw.id)
                 } catch (e: Exception) {
-                    database.dao().markAsProcessed(raw.id)
+                    MqttLogger.logApp("SyncManager: Worker error: ${e.message}", "ERROR")
+                    delay(2000)
                 }
-                    }
-                }
+            }
         }
+        // Initial trigger
+        processTrigger.trySend(Unit)
     }
 
     fun loadPairedDevices() {
@@ -194,7 +207,7 @@ class SyncManager private constructor(context: Context) {
     // CRITICAL: Ensure only one connection job exists
     private var connectionJob: Job? = null
     private var lastConnectionAttempt = 0L
-    private val CONNECTION_RETRY_DELAY = 5000L // 5s debounce
+    private val CONNECTION_RETRY_DELAY = 10000L // 10s debounce
 
     @SuppressLint("HardwareIds")
     fun start() {

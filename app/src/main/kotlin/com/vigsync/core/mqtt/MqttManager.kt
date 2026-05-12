@@ -36,6 +36,7 @@ class MqttManager {
     private val pendingSubscriptions = mutableListOf<String>()
 
     private var currentConfig: ConnectionConfig? = null
+    private var pendingConfig: ConnectionConfig? = null
 
     data class ConnectionConfig(
         val url: String,
@@ -73,6 +74,12 @@ class MqttManager {
                 return@withLock
             }
 
+            if (_connectionStatus.value == MqttConnectionStatus.CONNECTING && pendingConfig == newConfig) {
+                MqttLogger.log("Connection attempt already in progress for this config, skipping.", "INFO")
+                return@withLock
+            }
+
+            pendingConfig = newConfig
             _connectionStatus.value = MqttConnectionStatus.CONNECTING
             val cleanUrl = brokerUrl
                 .replace("mqtt://", "", ignoreCase = true)
@@ -93,6 +100,7 @@ class MqttManager {
                 val success = tryConnectOnce(context, cleanUrl, port, clientId, useTls, username, password, knownVersion)
                 if (success) {
                     currentConfig = newConfig
+                    pendingConfig = null
                     return@withLock
                 }
                 MqttLogger.log("Known version failed, starting re-detection dance", "WARNING")
@@ -107,6 +115,7 @@ class MqttManager {
                     MqttLogger.log("v5 Success! Saving to Registry", "SUCCESS")
                     dao.saveHostProtocol(HostProtocolEntity(cleanUrl, 5))
                     currentConfig = newConfig
+                    pendingConfig = null
                     return@withLock
                 }
                 if (i < 3) delay(2000)
@@ -119,6 +128,7 @@ class MqttManager {
                     MqttLogger.log("v3 Success! Saving to Registry", "SUCCESS")
                     dao.saveHostProtocol(HostProtocolEntity(cleanUrl, 3))
                     currentConfig = newConfig
+                    pendingConfig = null
                     return@withLock
                 }
                 if (i < 3) delay(2000)
@@ -127,6 +137,7 @@ class MqttManager {
             MqttLogger.log("Dance Failed: Connectivity issue for $cleanUrl", "ERROR")
             _connectionStatus.value = MqttConnectionStatus.DISCONNECTED
             currentConfig = null
+            pendingConfig = null
         }
     }
 
@@ -203,11 +214,6 @@ class MqttManager {
         return connectBuilder.send().thenApply {
             MqttLogger.log("Connected to v5 broker: $url", "INFO")
             _connectionStatus.value = MqttConnectionStatus.CONNECTED
-            
-            // Re-subscribe to pending topics
-            val subs = synchronized(pendingSubscriptions) { pendingSubscriptions.toList() }
-            subs.forEach { subscribe(appContext, it) }
-
             it
         }
     }
@@ -263,11 +269,6 @@ class MqttManager {
         return connectBuilder.send().thenApply {
             MqttLogger.log("Connected to v3 broker: $url", "INFO")
             _connectionStatus.value = MqttConnectionStatus.CONNECTED
-            
-            // Re-subscribe to pending topics
-            val subs = synchronized(pendingSubscriptions) { pendingSubscriptions.toList() }
-            subs.forEach { subscribe(appContext, it) }
-
             it
         }
     }
