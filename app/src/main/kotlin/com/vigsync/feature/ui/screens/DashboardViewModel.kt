@@ -12,6 +12,7 @@ import com.vigsync.core.mqtt.MqttService
 import com.vigsync.data.local.DeviceStatusEntity
 import com.vigsync.data.local.VigSyncDatabase
 import com.vigsync.data.prefs.AppPreferences
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -26,6 +27,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     
     val pairedDevices: StateFlow<List<DeviceStatusEntity>> = database.dao().getAllDeviceStatus()
         .map { list -> list.filter { it.deviceId != localDeviceId } }
+        .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val recentEvents: Flow<List<LogEntry>> = MqttLogger.logs.map { it.filter { entry -> entry.status == "RECEIVED" || entry.status == "SENT" } }
@@ -127,6 +129,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             items.groupBy { it.resolvedDeviceName }
                 .mapValues { it.value.size }
         }
+        .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
     fun toggleSync(permissionsGranted: Boolean = true) {

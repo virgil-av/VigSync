@@ -58,6 +58,7 @@ interface VigSyncDao {
         FROM events e 
         LEFT JOIN device_status d ON e.sourceDeviceId = d.deviceId 
         ORDER BY e.timestamp DESC
+        LIMIT 500
     """)
     fun getAllEventsWithLabels(): Flow<List<EventWithLabel>>
 
@@ -97,7 +98,7 @@ class Converters {
     fun toDirection(value: String) = EventDirection.valueOf(value)
 }
 
-@Database(entities = [RawMessage::class, EventEntity::class, DeviceStatusEntity::class, HostProtocolEntity::class], version = 6)
+@Database(entities = [RawMessage::class, EventEntity::class, DeviceStatusEntity::class, HostProtocolEntity::class], version = 7)
 @TypeConverters(Converters::class)
 abstract class VigSyncDatabase : RoomDatabase() {
     abstract fun dao(): VigSyncDao

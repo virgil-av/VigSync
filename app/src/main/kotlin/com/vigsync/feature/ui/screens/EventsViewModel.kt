@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.SavedStateHandle
 import com.vigsync.core.mqtt.MqttLogger
 import com.vigsync.data.local.VigSyncDatabase
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -23,6 +24,7 @@ class EventsViewModel(
         .map { items -> 
             items.map { it.resolvedDeviceName }.distinct().sorted()
         }
+        .flowOn(Dispatchers.Default)
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
@@ -41,7 +43,9 @@ class EventsViewModel(
         
         // Deduplication Logic: Group by timestamp and data, take first of each group
         filtered.distinctBy { it.event.timestamp to it.event.data }
-    }.stateIn(
+    }
+    .flowOn(Dispatchers.Default)
+    .stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyList()

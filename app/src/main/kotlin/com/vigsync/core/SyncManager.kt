@@ -118,16 +118,16 @@ class SyncManager private constructor(context: Context) {
                 .distinctUntilChanged()
                 .collect { messages ->
                     messages.forEach { raw ->
-                        try {
-                            val msg = Json.decodeFromString<RawMessage>(raw.payload)
-                            updateDeviceStatus(msg)
-                            if (raw.topic.contains("/events/")) {
-                                processIncomingEvent(msg)
-                            }
-                            database.dao().markAsProcessed(raw.id)
-                        } catch (e: Exception) {
-                            database.dao().markAsProcessed(raw.id)
-                        }
+                try {
+                    val msg = Json.decodeFromString<RawMessage>(raw.payload)
+                    updateDeviceStatus(msg)
+                    if (raw.topic.contains("/events/")) {
+                        processIncomingEvent(msg)
+                    }
+                    database.dao().markAsProcessed(raw.id)
+                } catch (e: Exception) {
+                    database.dao().markAsProcessed(raw.id)
+                }
                     }
                 }
         }
@@ -264,31 +264,29 @@ class SyncManager private constructor(context: Context) {
         MqttLogger.logApp("SyncManager: Stopped and Disconnected", "INFO")
     }
 
-    fun updateDeviceStatus(msg: RawMessage) {
+    suspend fun updateDeviceStatus(msg: RawMessage) {
         if (msg.senderId == null) return
         
-        scope.launch {
-            val dao = database.dao()
-            val existing = dao.getDeviceStatus(msg.senderId)
-            
-            if (existing != null) {
-                dao.updateHeartbeat(
-                    deviceId = msg.senderId,
-                    isOnline = true,
-                    lastSeen = msg.timestamp,
-                    batteryLevel = msg.batteryLevel ?: 0
-                )
-            } else {
-                val entity = DeviceStatusEntity(
-                    deviceId = msg.senderId,
-                    name = msg.senderName ?: "Unknown Device",
-                    batteryLevel = msg.batteryLevel ?: 0,
-                    isOnline = true,
-                    lastSeen = msg.timestamp,
-                    pairingTimestamp = System.currentTimeMillis()
-                )
-                dao.updateDeviceStatus(entity)
-            }
+        val dao = database.dao()
+        val existing = dao.getDeviceStatus(msg.senderId)
+        
+        if (existing != null) {
+            dao.updateHeartbeat(
+                deviceId = msg.senderId,
+                isOnline = true,
+                lastSeen = msg.timestamp,
+                batteryLevel = msg.batteryLevel ?: 0
+            )
+        } else {
+            val entity = DeviceStatusEntity(
+                deviceId = msg.senderId,
+                name = msg.senderName ?: "Unknown Device",
+                batteryLevel = msg.batteryLevel ?: 0,
+                isOnline = true,
+                lastSeen = msg.timestamp,
+                pairingTimestamp = System.currentTimeMillis()
+            )
+            dao.updateDeviceStatus(entity)
         }
     }
 
@@ -324,52 +322,50 @@ class SyncManager private constructor(context: Context) {
         showSyncNotification("Test", "This is a test notification from VigSync", "Local Device")
     }
 
-    fun processIncomingEvent(msg: RawMessage) {
-        scope.launch {
-            val sharedKey = appPreferences.sharedKey.first()
-            val decryptedData = if (!sharedKey.isNullOrEmpty() && !msg.data.isNullOrEmpty()) {
-                try {
-                    EncryptionManager(sharedKey).decrypt(msg.data) ?: msg.data
-                } catch (e: Exception) {
-                    "[Encrypted Content]"
-                }
-            } else msg.data ?: ""
+    suspend fun processIncomingEvent(msg: RawMessage) {
+        val sharedKey = appPreferences.sharedKey.first()
+        val decryptedData = if (!sharedKey.isNullOrEmpty() && !msg.data.isNullOrEmpty()) {
+            try {
+                EncryptionManager(sharedKey).decrypt(msg.data) ?: msg.data
+            } catch (e: Exception) {
+                "[Encrypted Content]"
+            }
+        } else msg.data ?: ""
 
-            // Deduplication using decrypted data hash
-            val hash = msg.calculateHash()
-            if (database.dao().countEventHash(hash) > 0) return@launch
+        // Deduplication using decrypted data hash
+        val hash = msg.calculateHash()
+        if (database.dao().countEventHash(hash) > 0) return
 
-            val isLocal = msg.senderId == getLocalDeviceId()
+        val isLocal = msg.senderId == getLocalDeviceId()
 
-            val event = EventEntity(
-                type = msg.type ?: "OTHER",
-                data = decryptedData,
-                timestamp = msg.timestamp,
-                syncStatus = if (isLocal) com.vigsync.core.models.SyncStatus.SENT else com.vigsync.core.models.SyncStatus.RECEIVED,
-                direction = if (isLocal) com.vigsync.core.models.EventDirection.LOCAL else com.vigsync.core.models.EventDirection.REMOTE,
-                sourceDeviceId = msg.senderId,
-                sourceDeviceName = msg.senderName,
-                payloadHash = hash
-            )
-            database.dao().insertEvent(event)
+        val event = EventEntity(
+            type = msg.type ?: "OTHER",
+            data = decryptedData,
+            timestamp = msg.timestamp,
+            syncStatus = if (isLocal) com.vigsync.core.models.SyncStatus.SENT else com.vigsync.core.models.SyncStatus.RECEIVED,
+            direction = if (isLocal) com.vigsync.core.models.EventDirection.LOCAL else com.vigsync.core.models.EventDirection.REMOTE,
+            sourceDeviceId = msg.senderId,
+            sourceDeviceName = msg.senderName,
+            payloadHash = hash
+        )
+        database.dao().insertEvent(event)
 
-            val deviceStatus = msg.senderId?.let { database.dao().getDeviceStatus(it) }
-            val resolvedName = deviceStatus?.customLabel ?: msg.senderName ?: "Unknown"
+        val deviceStatus = msg.senderId?.let { database.dao().getDeviceStatus(it) }
+        val resolvedName = deviceStatus?.customLabel ?: msg.senderName ?: "Unknown"
 
-            if (!isLocal) {
-                val shouldNotify = when (msg.type) {
-                    "CALL" -> appPreferences.notifCalls.first()
-                    "SMS" -> appPreferences.notifSms.first()
-                    else -> appPreferences.notifOther.first()
-                }
+        if (!isLocal) {
+            val shouldNotify = when (msg.type) {
+                "CALL" -> appPreferences.notifCalls.first()
+                "SMS" -> appPreferences.notifSms.first()
+                else -> appPreferences.notifOther.first()
+            }
 
-                if (shouldNotify) {
-                    showSyncNotification(
-                        title = "${msg.type} from $resolvedName",
-                        message = decryptedData,
-                        deviceName = resolvedName
-                    )
-                }
+            if (shouldNotify) {
+                showSyncNotification(
+                    title = "${msg.type} from $resolvedName",
+                    message = decryptedData,
+                    deviceName = resolvedName
+                )
             }
         }
     }

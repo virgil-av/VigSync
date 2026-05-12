@@ -1,6 +1,7 @@
 package com.vigsync.data.local
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.vigsync.core.models.EventDirection
 import com.vigsync.core.models.SyncStatus
@@ -14,7 +15,10 @@ data class RawMessage(
     val isProcessed: Boolean = false
 )
 
-@Entity(tableName = "events")
+@Entity(
+    tableName = "events",
+    indices = [Index(value = ["sourceDeviceId"])]
+)
 data class EventEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val type: String,
