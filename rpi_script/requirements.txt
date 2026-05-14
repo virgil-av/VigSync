@@ -1,2 +1,6 @@
 paho-mqtt
 watchdog
+cryptography
+pystray
+Pillow
+winotify

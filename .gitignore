@@ -26,3 +26,5 @@ google-services.json
 
 # Local specific binary/files
 /vigsync
+rpi_script/__pycache__/vigsync_gui_client.cpython-314.pyc
+walkthrough.artifact.md
