@@ -24,3 +24,5 @@ documentation_and_planning/
 *.keystore
 google-services.json
 /vigsync
+rpi_script/__pycache__/
+walkthrough.artifact.md
