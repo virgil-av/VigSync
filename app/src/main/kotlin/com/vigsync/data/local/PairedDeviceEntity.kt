@@ -11,5 +11,6 @@ data class PairedDeviceEntity(
     val sharedKey: String,
     val lastSeen: Long = System.currentTimeMillis(),
     val isOnline: Boolean = false,
-    val batteryLevel: Int? = null
+    val batteryLevel: Int? = null,
+    val addedAt: Long = System.currentTimeMillis()
 )

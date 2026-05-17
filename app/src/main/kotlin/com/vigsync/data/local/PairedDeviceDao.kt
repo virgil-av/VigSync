@@ -8,7 +8,7 @@ interface PairedDeviceDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertDevice(device: PairedDeviceEntity)
 
-    @Query("SELECT * FROM paired_devices")
+    @Query("SELECT * FROM paired_devices ORDER BY addedAt ASC")
     fun getAllDevices(): Flow<List<PairedDeviceEntity>>
 
     @Query("SELECT * FROM paired_devices WHERE deviceId = :id")

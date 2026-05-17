@@ -67,7 +67,8 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                     deviceId = config.deviceId,
                     deviceName = config.deviceName ?: "Unknown Device",
                     topicPrefix = config.topicPrefix ?: "vigsync",
-                    sharedKey = config.sharedKey ?: ""
+                    sharedKey = config.sharedKey ?: "",
+                    addedAt = System.currentTimeMillis()
                 )
                 deviceDao.insertDevice(newDevice)
                 

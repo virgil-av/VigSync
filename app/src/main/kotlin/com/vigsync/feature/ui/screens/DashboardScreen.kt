@@ -97,6 +97,15 @@ fun DashboardScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // Paired Devices
+            items(devices) { device ->
+                DeviceCard(
+                    device = device,
+                    isSyncing = syncingDevices.contains(device.deviceId),
+                    onDelete = { viewModel.removeDevice(device) }
+                )
+            }
+
             // Add Device Card
             item {
                 AddDeviceCard(onClick = {
@@ -106,15 +115,6 @@ fun DashboardScreen(
                         cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
                     }
                 })
-            }
-
-            // Paired Devices
-            items(devices) { device ->
-                DeviceCard(
-                    device = device,
-                    isSyncing = syncingDevices.contains(device.deviceId),
-                    onDelete = { viewModel.removeDevice(device) }
-                )
             }
         }
     }
