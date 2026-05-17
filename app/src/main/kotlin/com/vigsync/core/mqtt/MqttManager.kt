@@ -332,10 +332,30 @@ class MqttManager private constructor(private val context: Context) {
                     }
 
                     if (shouldNotify) {
+                        val resolvedDeviceName = rawMessage.senderName ?: device?.deviceName ?: "Remote Device"
+                        
+                        val (title, body) = when {
+                            rawMessage.type == "SMS" -> {
+                                "New SMS on $resolvedDeviceName" to decryptedData
+                            }
+                            rawMessage.type?.contains("MISSED") == true -> {
+                                "Missed call on $resolvedDeviceName" to decryptedData
+                            }
+                            rawMessage.type == "NOTIFICATION" && decryptedData.contains("|") -> {
+                                val parts = decryptedData.split("|")
+                                val appLabel = parts.getOrNull(0) ?: "App"
+                                val content = parts.drop(2).joinToString("|")
+                                "$appLabel alert on $resolvedDeviceName" to content
+                            }
+                            else -> {
+                                "${rawMessage.type ?: "New Alert"} on $resolvedDeviceName" to decryptedData
+                            }
+                        }
+
                         showNotification(
-                            title = "${rawMessage.type} from ${rawMessage.senderName ?: "Remote"}",
-                            message = decryptedData,
-                            deviceName = rawMessage.senderName ?: "Remote Device"
+                            title = title,
+                            message = body,
+                            deviceName = resolvedDeviceName
                         )
                     }
                 } else if (topic.contains("/status/")) {
