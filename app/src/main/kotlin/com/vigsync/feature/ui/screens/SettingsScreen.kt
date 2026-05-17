@@ -263,7 +263,9 @@ fun MqttConfigTab(viewModel: SettingsViewModel) {
                     readOnly = true,
                     label = { Text("Security") },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = securityExpanded) },
-                    modifier = Modifier.menuAnchor()
+                    modifier = Modifier.menuAnchor(),
+                    singleLine = true,
+                    maxLines = 1
                 )
                 ExposedDropdownMenu(
                     expanded = securityExpanded,
@@ -299,7 +301,9 @@ fun MqttConfigTab(viewModel: SettingsViewModel) {
                     readOnly = true,
                     label = { Text("Version") },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = versionExpanded) },
-                    modifier = Modifier.menuAnchor()
+                    modifier = Modifier.menuAnchor(),
+                    singleLine = true,
+                    maxLines = 1
                 )
                 ExposedDropdownMenu(
                     expanded = versionExpanded,

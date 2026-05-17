@@ -272,6 +272,13 @@ fun DeviceCard(
                         )
                         if (device.batteryLevel != null) {
                             Spacer(modifier = Modifier.width(8.dp))
+                            Icon(
+                                imageVector = Icons.Default.BatteryFull,
+                                contentDescription = null,
+                                modifier = Modifier.size(12.dp),
+                                tint = MaterialTheme.colorScheme.outline
+                            )
+                            Spacer(modifier = Modifier.width(2.dp))
                             Text(
                                 text = "${device.batteryLevel}%",
                                 style = MaterialTheme.typography.labelSmall,
