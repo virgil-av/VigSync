@@ -15,6 +15,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
+import androidx.navigation.NavType
 import com.vigsync.feature.ui.screens.*
 
 sealed class Screen(val route: String, val baseRoute: String, val label: String, val icon: @Composable () -> Unit) {
@@ -70,7 +72,18 @@ fun VigSyncApp() {
             composable(Screen.Events.route) {
                 EventsScreen()
             }
-            composable(Screen.Settings.route) { SettingsScreen() }
+            composable(
+                route = Screen.Settings.route + "?openMqttConfig={openMqttConfig}",
+                arguments = listOf(
+                    navArgument("openMqttConfig") { 
+                        type = NavType.BoolType
+                        defaultValue = false
+                    }
+                )
+            ) { backStackEntry ->
+                val openMqttConfig = backStackEntry.arguments?.getBoolean("openMqttConfig") ?: false
+                SettingsScreen(openMqttConfig = openMqttConfig)
+            }
         }
     }
 }

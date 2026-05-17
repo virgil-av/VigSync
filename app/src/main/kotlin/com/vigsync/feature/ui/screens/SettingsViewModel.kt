@@ -46,12 +46,15 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 val config = Json.decodeFromString<ImportConfig>(jsonString)
                 
                 // Update basic MQTT settings
+                val importedPort = config.port?.toString() ?: brokerPort.value
+                val importedTls = config.useTls ?: (importedPort == "8883")
+                
                 appPreferences.saveServerConfig(
                     url = config.brokerUrl ?: brokerUrl.value,
-                    port = config.port?.toString() ?: brokerPort.value,
+                    port = importedPort,
                     user = config.username ?: brokerUser.value,
                     pass = config.password ?: brokerPass.value,
-                    tls = config.useTls ?: useTls.value,
+                    tls = importedTls,
                     version = mqttVersion.value
                 )
 

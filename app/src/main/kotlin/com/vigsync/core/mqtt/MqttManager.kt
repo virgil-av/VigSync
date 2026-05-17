@@ -29,6 +29,7 @@ class MqttManager private constructor(private val context: Context) {
 
     private var client5: Mqtt5Client? = null
     private var client3: Mqtt3Client? = null
+    private var connectJob: Job? = null
 
     private val _connectionState = MutableStateFlow(MqttConnectionState.IDLE)
     val connectionState: StateFlow<MqttConnectionState> = _connectionState.asStateFlow()
@@ -85,7 +86,8 @@ class MqttManager private constructor(private val context: Context) {
 
     fun connect() {
         shouldBeConnected = true
-        scope.launch {
+        connectJob?.cancel()
+        connectJob = scope.launch {
             if (_connectionState.value == MqttConnectionState.CONNECTING || 
                 _connectionState.value == MqttConnectionState.CONNECTED) return@launch
 
@@ -96,15 +98,29 @@ class MqttManager private constructor(private val context: Context) {
             }
 
             val url = appPreferences.brokerUrl.first()
-            val port = appPreferences.brokerPort.first().toIntOrNull() ?: 1883
+            val portStr = appPreferences.brokerPort.first()
+            val port = portStr.toIntOrNull() ?: 1883
             val user = appPreferences.brokerUser.first()
             val pass = appPreferences.brokerPass.first()
             val tls = appPreferences.useTls.first()
             val version = appPreferences.mqttVersion.first()
             val deviceId = "vigsync_client_${UUID.randomUUID().toString().take(8)}"
+            val isFirstTime = !appPreferences.lastConnectedSuccess.first()
 
             _connectionState.value = MqttConnectionState.CONNECTING
             mqttLogger.logSystemEvent("MQTT Connection", "Connecting to $url:$port (v$version, TLS=$tls)")
+
+            // First-time setup timeout safeguard
+            val timeoutJob = if (isFirstTime) {
+                launch {
+                    delay(5000)
+                    if (_connectionState.value == MqttConnectionState.CONNECTING) {
+                        mqttLogger.logSystemEvent("MQTT Connection", "First connection timed out (5s). Check your settings (Port/Security).", isError = true)
+                        disconnect()
+                        _connectionState.value = MqttConnectionState.ERROR
+                    }
+                }
+            } else null
 
             try {
                 if (version == "5") {
@@ -112,7 +128,9 @@ class MqttManager private constructor(private val context: Context) {
                 } else {
                     connectV3(url, port, user, pass, tls, deviceId)
                 }
+                timeoutJob?.join()
             } catch (e: Exception) {
+                timeoutJob?.cancel()
                 handleConnectionError(e)
             }
         }
@@ -282,12 +300,18 @@ class MqttManager private constructor(private val context: Context) {
 
     fun disconnect() {
         shouldBeConnected = false
+        connectJob?.cancel()
+        connectJob = null
         scope.launch {
-            mqttLogger.logSystemEvent("MQTT Connection", "Disconnecting...")
+            mqttLogger.logSystemEvent("MQTT Connection", "Disconnecting aggressively...")
             _connectionState.value = MqttConnectionState.DISCONNECTED
             
-            client5?.toAsync()?.disconnect()
-            client3?.toAsync()?.disconnect()
+            try {
+                client5?.toAsync()?.disconnect()
+                client3?.toAsync()?.disconnect()
+            } catch (e: Exception) {
+                Log.w("MqttManager", "Error during library disconnect: ${e.message}")
+            }
             
             client5 = null
             client3 = null

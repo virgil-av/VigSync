@@ -124,7 +124,7 @@ fun DashboardScreen(
             onDismiss = { showScanner = false },
             onResult = { result ->
                 viewModel.pairDevice(result) {
-                    navController?.navigate(Screen.Settings.route)
+                    navController?.navigate(Screen.Settings.route + "?openMqttConfig=true")
                 }
                 showScanner = false
             }

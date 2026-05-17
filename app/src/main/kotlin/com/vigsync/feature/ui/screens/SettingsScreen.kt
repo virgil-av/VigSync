@@ -35,8 +35,17 @@ enum class SettingsSection { MQTT_CONFIG, MQTT_DEBUG }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
+fun SettingsScreen(
+    viewModel: SettingsViewModel = viewModel(),
+    openMqttConfig: Boolean = false
+) {
     var activeDialog by remember { mutableStateOf<SettingsSection?>(null) }
+
+    LaunchedEffect(openMqttConfig) {
+        if (openMqttConfig) {
+            activeDialog = SettingsSection.MQTT_CONFIG
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -173,6 +182,13 @@ fun MqttConfigTab(viewModel: SettingsViewModel) {
 
     var securityExpanded by remember { mutableStateOf(false) }
     var versionExpanded by remember { mutableStateOf(false) }
+
+    // Sync local state with saved values (Crucial for JSON import detection)
+    LaunchedEffect(savedTls, savedPort, savedVersion) {
+        tls = savedTls
+        port = savedPort
+        version = savedVersion
+    }
 
     val noAutoCorrect = KeyboardOptions(
         autoCorrect = false,
