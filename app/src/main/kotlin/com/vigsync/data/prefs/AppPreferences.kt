@@ -17,7 +17,6 @@ class AppPreferences(private val context: Context) {
         val BROKER_PORT = stringPreferencesKey("server_broker_port")
         val BROKER_USER = stringPreferencesKey("server_broker_user")
         val BROKER_PASS = stringPreferencesKey("server_broker_pass")
-        val TOPIC_PREFIX = stringPreferencesKey("server_topic_prefix")
         val SHARED_KEY = stringPreferencesKey("shared_key")
         val USE_TLS = booleanPreferencesKey("use_tls")
 
@@ -52,17 +51,15 @@ class AppPreferences(private val context: Context) {
     val brokerPort: Flow<String> = context.dataStore.data.map { it[BROKER_PORT] ?: "1883" }
     val brokerUser: Flow<String> = context.dataStore.data.map { it[BROKER_USER] ?: "" }
     val brokerPass: Flow<String> = context.dataStore.data.map { it[BROKER_PASS] ?: "" }
-    val topicPrefix: Flow<String> = context.dataStore.data.map { it[TOPIC_PREFIX] ?: "vigsync" }
     val sharedKey: Flow<String?> = context.dataStore.data.map { it[SHARED_KEY] }
     val useTls: Flow<Boolean> = context.dataStore.data.map { it[USE_TLS] ?: false }
 
-    suspend fun saveServerConfig(url: String, port: String, user: String, pass: String, prefix: String, tls: Boolean) {
+    suspend fun saveServerConfig(url: String, port: String, user: String, pass: String, tls: Boolean) {
         context.dataStore.edit {
             it[BROKER_URL] = url
             it[BROKER_PORT] = port
             it[BROKER_USER] = user
             it[BROKER_PASS] = pass
-            it[TOPIC_PREFIX] = prefix
             it[USE_TLS] = tls
         }
     }

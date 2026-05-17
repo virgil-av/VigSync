@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.SavedStateHandle
 import com.vigsync.data.local.VigSyncDatabase
+import com.vigsync.data.local.EventEntity
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -14,41 +15,23 @@ class EventsViewModel(
 ) : AndroidViewModel(application) {
     private val database = VigSyncDatabase.getInstance(application)
 
-    // Reactive selection from Navigation SavedStateHandle
-    val selectedDevice: StateFlow<String?> = savedStateHandle.getStateFlow("deviceName", null)
     val selectedType: StateFlow<String?> = savedStateHandle.getStateFlow("eventType", null)
 
-    val devices = database.dao().getAllEvents()
-        .map { events -> 
-            events.mapNotNull { it.sourceDevice }.distinct().sorted()
-        }
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
-            initialValue = emptyList()
-        )
-
-    val events = combine(database.dao().getAllEvents(), selectedDevice, selectedType) { allEvents, deviceFilter, typeFilter ->
-        val filtered = allEvents.filter { event ->
-            val matchesDevice = deviceFilter == null || event.sourceDevice == deviceFilter
-            val matchesType = typeFilter == null || when(typeFilter) {
+    val events: StateFlow<List<EventEntity>> = combine(
+        database.dao().getAllEvents(),
+        selectedType
+    ) { allEvents, typeFilter ->
+        allEvents.filter { event ->
+            typeFilter == null || when(typeFilter) {
                 "CALL" -> event.type.contains("CALL")
                 else -> event.type == typeFilter
             }
-            matchesDevice && matchesType
-        }
-        
-        // Deduplication Logic: Group by timestamp and data, take first of each group
-        filtered.distinctBy { it.timestamp to it.data }
+        }.distinctBy { it.timestamp to it.data }
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyList()
     )
-
-    fun setSelectedDevice(deviceName: String?) {
-        savedStateHandle["deviceName"] = deviceName
-    }
 
     fun setSelectedType(type: String?) {
         savedStateHandle["eventType"] = type
@@ -57,12 +40,6 @@ class EventsViewModel(
     fun clearEvents() {
         viewModelScope.launch {
             database.dao().clearAllEvents()
-        }
-    }
-
-    fun clearEventsForDevice(deviceName: String) {
-        viewModelScope.launch {
-            database.dao().clearEventsForDevice(deviceName)
         }
     }
 }
