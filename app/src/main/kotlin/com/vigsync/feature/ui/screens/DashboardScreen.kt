@@ -195,15 +195,18 @@ fun DeviceCard(
     val currentTime = System.currentTimeMillis()
     val isRecentlySeen = (currentTime - device.lastSeen) < 600000 // 10 minutes
     val effectiveOnline = device.isOnline && isRecentlySeen
+    val isWaiting = isSyncing || device.isInitial
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .height(160.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (isSyncing || device.isInitial) MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
+            containerColor = if (isWaiting) MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f)
                              else MaterialTheme.colorScheme.surface
         ),
+        border = if (isWaiting) androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.2f))
+                 else null,
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -221,7 +224,7 @@ fun DeviceCard(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                if (isSyncing || device.isInitial) {
+                if (isWaiting) {
                     SyncingAnimation()
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
@@ -231,14 +234,15 @@ fun DeviceCard(
                         fontSize = 12.sp,
                         textAlign = TextAlign.Center
                     )
-                    if (isSyncing) {
-                        Text(
-                            "Wait 2 minutes",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.outline,
-                            textAlign = TextAlign.Center
-                        )
-                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "This might take up to 2 minutes to sync...",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline,
+                        textAlign = TextAlign.Center,
+                        fontSize = 10.sp,
+                        lineHeight = 12.sp
+                    )
                 } else {
                     Icon(
                         Icons.Default.Smartphone,
@@ -266,6 +270,15 @@ fun DeviceCard(
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.outline
                         )
+                        if (device.batteryLevel != null) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "${device.batteryLevel}%",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.outline,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                     if (effectiveOnline) {
                         Text(
