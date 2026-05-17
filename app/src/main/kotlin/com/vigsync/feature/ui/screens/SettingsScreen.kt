@@ -553,10 +553,10 @@ fun MqttLogItem(log: MqttLogEntity, formatter: SimpleDateFormat) {
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = log.topic,
+                        text = if (log.isIncoming) "Received" else "Sent",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
+                        color = if (log.isIncoming) Color(0xFF4CAF50) else Color(0xFF2196F3)
                     )
                 }
                 Text(
@@ -566,6 +566,17 @@ fun MqttLogItem(log: MqttLogEntity, formatter: SimpleDateFormat) {
                 )
             }
             Spacer(modifier = Modifier.height(8.dp))
+            
+            // Topic shown in Body
+            Text(
+                text = log.topic,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Medium
+            )
+            
+            Spacer(modifier = Modifier.height(4.dp))
+
             Text(
                 text = log.payload,
                 style = MaterialTheme.typography.bodySmall,

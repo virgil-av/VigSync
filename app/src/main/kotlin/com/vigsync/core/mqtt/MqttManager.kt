@@ -10,10 +10,15 @@ import com.hivemq.client.mqtt.MqttClient
 import com.hivemq.client.mqtt.MqttGlobalPublishFilter
 import com.hivemq.client.mqtt.mqtt3.Mqtt3Client
 import com.hivemq.client.mqtt.mqtt5.Mqtt5Client
+import com.vigsync.core.crypto.EncryptionManager
 import com.vigsync.core.models.MqttConnectionState
+import com.vigsync.core.models.RawMessage
+import com.vigsync.data.local.EventEntity
+import com.vigsync.data.local.VigSyncDatabase
 import com.vigsync.data.prefs.AppPreferences
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.serialization.json.Json
 import java.util.*
 
 class MqttManager private constructor(private val context: Context) {
@@ -199,6 +204,7 @@ class MqttManager private constructor(private val context: Context) {
             val payload = String(publish.payloadAsBytes)
             mqttLogger.logMessage(topic, payload, true)
             _incomingMessages.tryEmit(topic to payload)
+            processIncomingMessage(topic, payload)
         }
     }
 
@@ -208,6 +214,45 @@ class MqttManager private constructor(private val context: Context) {
             val payload = String(publish.payloadAsBytes)
             mqttLogger.logMessage(topic, payload, true)
             _incomingMessages.tryEmit(topic to payload)
+            processIncomingMessage(topic, payload)
+        }
+    }
+
+    private fun processIncomingMessage(topic: String, payload: String) {
+        scope.launch {
+            try {
+                val json = Json { ignoreUnknownKeys = true }
+                val rawMessage = json.decodeFromString<RawMessage>(payload)
+                val sharedKey = appPreferences.sharedKey.first() ?: ""
+                
+                if (topic.contains("/events/")) {
+                    val decryptedData = if (rawMessage.data != null && sharedKey.isNotEmpty()) {
+                        try {
+                            EncryptionManager(sharedKey).decrypt(rawMessage.data) ?: rawMessage.data
+                        } catch (e: Exception) {
+                            mqttLogger.logSystemEvent("Decryption Error", "Failed to decrypt data: ${e.message}", isError = true)
+                            "[Encrypted] ${rawMessage.data}"
+                        }
+                    } else {
+                        rawMessage.data ?: ""
+                    }
+                    
+                    val event = EventEntity(
+                        type = rawMessage.type ?: "UNKNOWN",
+                        data = decryptedData,
+                        timestamp = rawMessage.timestamp,
+                        syncStatus = com.vigsync.core.models.SyncStatus.RECEIVED,
+                        direction = com.vigsync.core.models.EventDirection.REMOTE,
+                        sourceDevice = rawMessage.senderName ?: "Remote Device",
+                        payloadHash = "${topic}_${rawMessage.timestamp}".hashCode().toString()
+                    )
+                    
+                    VigSyncDatabase.getInstance(context).dao().insertEvent(event)
+                    mqttLogger.logSystemEvent("MQTT Message", "Processed and saved event: ${event.type}")
+                }
+            } catch (e: Exception) {
+                mqttLogger.logSystemEvent("MQTT Error", "Failed to process message: ${e.message}", isError = true)
+            }
         }
     }
 
