@@ -343,7 +343,8 @@ class MqttManager private constructor(private val context: Context) {
                             }
                             rawMessage.type == "NOTIFICATION" && decryptedData.contains("|") -> {
                                 val parts = decryptedData.split("|")
-                                val appLabel = parts.getOrNull(0) ?: "App"
+                                val packageId = parts.getOrNull(1) ?: ""
+                                val appLabel = com.vigsync.core.utils.AppNameUtils.extractDisplayName(packageId, context.packageManager)
                                 val content = parts.drop(2).joinToString("|")
                                 "$appLabel alert on $resolvedDeviceName" to content
                             }

@@ -21,11 +21,19 @@ object AppNameUtils {
         "com.google.android.youtube" to "YouTube"
     )
 
-    fun extractDisplayName(packageName: String): String {
-        // 1. Check mapping for common apps
+    fun extractDisplayName(packageName: String, packageManager: android.content.pm.PackageManager? = null): String {
+        // 1. Try local lookup if PM is provided
+        packageManager?.let { pm ->
+            try {
+                val info = pm.getApplicationInfo(packageName, 0)
+                return pm.getApplicationLabel(info).toString()
+            } catch (_: Exception) {}
+        }
+
+        // 2. Check mapping for common apps
         commonApps[packageName.lowercase()]?.let { return it }
 
-        // 2. Generic extraction
+        // 3. Generic extraction
         return try {
             val parts = packageName.split(".")
             if (parts.size >= 2) {
