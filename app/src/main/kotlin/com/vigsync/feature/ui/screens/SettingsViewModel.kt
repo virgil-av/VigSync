@@ -32,6 +32,15 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun updateAndConnect(url: String, port: String, user: String, pass: String, tls: Boolean, version: String) {
+        viewModelScope.launch {
+            // Await the persistence of settings
+            appPreferences.saveServerConfig(url, port, user, pass, tls, version)
+            // Now safe to connect
+            mqttManager.connect()
+        }
+    }
+
     fun connect() {
         mqttManager.connect()
     }

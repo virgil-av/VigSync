@@ -108,7 +108,7 @@ class MqttManager private constructor(private val context: Context) {
             val isFirstTime = !appPreferences.lastConnectedSuccess.first()
 
             _connectionState.value = MqttConnectionState.CONNECTING
-            mqttLogger.logSystemEvent("MQTT Connection", "Connecting to $url:$port (v$version, TLS=$tls)")
+            mqttLogger.logSystemEvent("MQTT Connection", "Connecting to $url:$port (v$version, TLS=$tls, User=${user.take(3)}...)")
 
             // 1. Validation Safeguard: SSL/TLS requires credentials
             if (tls && (user.isBlank() || pass.isBlank())) {

@@ -391,8 +391,7 @@ fun MqttConfigTab(viewModel: SettingsViewModel) {
 
         Button(
             onClick = { 
-                viewModel.saveServerConfig(url, port, user, pass, tls, version)
-                viewModel.connect()
+                viewModel.updateAndConnect(url, port, user, pass, tls, version)
             },
             modifier = Modifier.fillMaxWidth(),
             enabled = connectionState != MqttConnectionState.CONNECTING && 
