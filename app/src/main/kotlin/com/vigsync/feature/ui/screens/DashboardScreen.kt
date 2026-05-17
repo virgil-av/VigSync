@@ -48,6 +48,12 @@ import com.vigsync.data.local.PairedDeviceEntity
 import com.vigsync.feature.ui.Screen
 import java.util.concurrent.Executors
 
+import androidx.compose.ui.text.style.TextOverflow
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlinx.coroutines.delay
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(
@@ -60,6 +66,15 @@ fun DashboardScreen(
     val syncingDevices by viewModel.syncingDevices.collectAsState()
     
     var showScanner by remember { mutableStateOf(false) }
+
+    // Periodic refresh to update "last seen" relative status
+    var ticks by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(Unit) {
+        while(true) {
+            delay(30000) // Refresh every 30 seconds
+            ticks++
+        }
+    }
 
     LaunchedEffect(Unit) {
         viewModel.pairingError.collect { error ->
@@ -175,13 +190,18 @@ fun DeviceCard(
     onDelete: () -> Unit
 ) {
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    val timeFormatter = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
+    
+    val currentTime = System.currentTimeMillis()
+    val isRecentlySeen = (currentTime - device.lastSeen) < 600000 // 10 minutes
+    val effectiveOnline = device.isOnline && isRecentlySeen
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .height(160.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (isSyncing) MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
+            containerColor = if (isSyncing || device.isInitial) MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
                              else MaterialTheme.colorScheme.surface
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
@@ -201,46 +221,58 @@ fun DeviceCard(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                if (isSyncing) {
+                if (isSyncing || device.isInitial) {
                     SyncingAnimation()
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        "Syncing...",
+                        if (isSyncing) "Syncing..." else "Waiting for status...",
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.secondary,
-                        fontSize = 14.sp
-                    )
-                    Text(
-                        "Wait 2 minutes",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.outline,
+                        fontSize = 12.sp,
                         textAlign = TextAlign.Center
                     )
+                    if (isSyncing) {
+                        Text(
+                            "Wait 2 minutes",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.outline,
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 } else {
                     Icon(
                         Icons.Default.Smartphone,
                         contentDescription = null,
                         modifier = Modifier.size(40.dp),
-                        tint = if (device.isOnline) Color(0xFF4CAF50) else Color.Gray
+                        tint = if (effectiveOnline) Color(0xFF4CAF50) else Color.Gray
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         device.deviceName,
                         fontWeight = FontWeight.ExtraBold,
                         maxLines = 1,
-                        fontSize = 14.sp
+                        fontSize = 14.sp,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Surface(
                             modifier = Modifier.size(8.dp),
                             shape = CircleShape,
-                            color = if (device.isOnline) Color(0xFF4CAF50) else Color.Gray
+                            color = if (effectiveOnline) Color(0xFF4CAF50) else Color.Gray
                         ) {}
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = if (device.isOnline) "Online" else "Offline",
+                            text = if (effectiveOnline) "Online" else "Offline",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.outline
+                        )
+                    }
+                    if (effectiveOnline) {
+                        Text(
+                            text = timeFormatter.format(Date(device.lastSeen)),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.outline,
+                            fontSize = 10.sp
                         )
                     }
                 }

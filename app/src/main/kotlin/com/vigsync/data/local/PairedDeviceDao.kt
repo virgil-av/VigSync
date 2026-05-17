@@ -17,6 +17,6 @@ interface PairedDeviceDao {
     @Delete
     suspend fun deleteDevice(device: PairedDeviceEntity)
 
-    @Query("UPDATE paired_devices SET isOnline = :online, batteryLevel = :battery, lastSeen = :timestamp WHERE deviceId = :id")
+    @Query("UPDATE paired_devices SET isOnline = :online, batteryLevel = :battery, lastSeen = :timestamp, isInitial = 0 WHERE deviceId = :id")
     suspend fun updateStatus(id: String, online: Boolean, battery: Int?, timestamp: Long)
 }

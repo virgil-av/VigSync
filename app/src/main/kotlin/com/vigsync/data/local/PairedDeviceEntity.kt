@@ -12,5 +12,6 @@ data class PairedDeviceEntity(
     val lastSeen: Long = System.currentTimeMillis(),
     val isOnline: Boolean = false,
     val batteryLevel: Int? = null,
-    val addedAt: Long = System.currentTimeMillis()
+    val addedAt: Long = System.currentTimeMillis(),
+    val isInitial: Boolean = true
 )
