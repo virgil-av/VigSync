@@ -10,6 +10,12 @@ import com.hivemq.client.mqtt.MqttClient
 import com.hivemq.client.mqtt.MqttGlobalPublishFilter
 import com.hivemq.client.mqtt.mqtt3.Mqtt3Client
 import com.hivemq.client.mqtt.mqtt5.Mqtt5Client
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.os.Build
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import com.vigsync.R
 import com.vigsync.core.crypto.EncryptionManager
 import com.vigsync.core.models.MqttConnectionState
 import com.vigsync.core.models.RawMessage
@@ -26,6 +32,9 @@ class MqttManager private constructor(private val context: Context) {
     private val appPreferences = AppPreferences(context)
     private val mqttLogger = MqttLogger.getInstance(context)
     private val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+
+    private val NOTIF_CHANNEL_ID = "vigsync_alerts"
+    private val NOTIF_CHANNEL_NAME = "VigSync Alerts"
 
     private var client5: Mqtt5Client? = null
     private var client3: Mqtt3Client? = null
@@ -75,6 +84,39 @@ class MqttManager private constructor(private val context: Context) {
 
     init {
         registerNetworkCallback()
+        createNotificationChannel()
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                NOTIF_CHANNEL_ID,
+                NOTIF_CHANNEL_NAME,
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Notifications for incoming events from paired devices"
+            }
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.createNotificationChannel(channel)
+        }
+    }
+
+    fun showNotification(title: String, message: String, deviceName: String) {
+        val builder = NotificationCompat.Builder(context, NOTIF_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setSubText(deviceName)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+
+        try {
+            with(NotificationManagerCompat.from(context)) {
+                notify(System.currentTimeMillis().toInt(), builder.build())
+            }
+        } catch (e: SecurityException) {
+            mqttLogger.logSystemEvent("Notification Error", "Permission denied for showing notification", isError = true)
+        }
     }
 
     private fun registerNetworkCallback() {
@@ -274,6 +316,21 @@ class MqttManager private constructor(private val context: Context) {
                     
                     VigSyncDatabase.getInstance(context).dao().insertEvent(event)
                     mqttLogger.logSystemEvent("MQTT Message", "Processed and saved event: ${event.type}")
+
+                    // Check notification preferences
+                    val shouldNotify = when (rawMessage.type) {
+                        "CALL" -> appPreferences.notifCalls.first()
+                        "SMS" -> appPreferences.notifSms.first()
+                        else -> appPreferences.notifOther.first()
+                    }
+
+                    if (shouldNotify) {
+                        showNotification(
+                            title = "${rawMessage.type} from ${rawMessage.senderName ?: "Remote"}",
+                            message = decryptedData,
+                            deviceName = rawMessage.senderName ?: "Remote Device"
+                        )
+                    }
                 } else if (topic.contains("/status/")) {
                     val deviceId = topic.split("/").last()
                     VigSyncDatabase.getInstance(context).deviceDao().updateStatus(

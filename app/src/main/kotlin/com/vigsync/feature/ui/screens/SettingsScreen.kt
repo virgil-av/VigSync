@@ -36,7 +36,14 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-enum class SettingsSection { MQTT_CONFIG, MQTT_DEBUG }
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.core.content.ContextCompat
+
+enum class SettingsSection { MQTT_CONFIG, PUSH_NOTIFICATIONS, MQTT_DEBUG }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,6 +77,13 @@ fun SettingsScreen(
                 subtitle = "Broker and Connection configuration",
                 icon = Icons.Default.Dns,
                 onClick = { activeDialog = SettingsSection.MQTT_CONFIG }
+            )
+
+            SettingsMenuItem(
+                title = "Push Notifications",
+                subtitle = "Local alerts for incoming events",
+                icon = Icons.Default.NotificationsActive,
+                onClick = { activeDialog = SettingsSection.PUSH_NOTIFICATIONS }
             )
 
             SettingsMenuItem(
@@ -146,7 +160,11 @@ fun SettingsDialog(
                 topBar = {
                     TopAppBar(
                         title = { 
-                            Text(if (section == SettingsSection.MQTT_CONFIG) "MQTT Settings" else "MQTT Debugging")
+                            Text(when(section) {
+                                SettingsSection.MQTT_CONFIG -> "MQTT Settings"
+                                SettingsSection.PUSH_NOTIFICATIONS -> "Push Notifications"
+                                SettingsSection.MQTT_DEBUG -> "MQTT Debugging"
+                            })
                         },
                         navigationIcon = {
                             IconButton(onClick = onDismiss) {
@@ -159,6 +177,7 @@ fun SettingsDialog(
                 Box(modifier = Modifier.padding(padding).fillMaxSize()) {
                     when (section) {
                         SettingsSection.MQTT_CONFIG -> MqttConfigTab(viewModel)
+                        SettingsSection.PUSH_NOTIFICATIONS -> PushNotificationsTab(viewModel)
                         SettingsSection.MQTT_DEBUG -> MqttDebugTab()
                     }
                 }
@@ -469,6 +488,120 @@ fun JsonImportCard(onImport: (String) -> Unit) {
                 }
             }
         }
+    }
+}
+
+@Composable
+fun PushNotificationsTab(viewModel: SettingsViewModel) {
+    val context = LocalContext.current
+    val calls by viewModel.notifCalls.collectAsState()
+    val sms by viewModel.notifSms.collectAsState()
+    val other by viewModel.notifOther.collectAsState()
+
+    var hasNotifPermission by remember {
+        mutableStateOf(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+            } else true
+        )
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        hasNotifPermission = isGranted
+        if (!isGranted) {
+            Toast.makeText(context, "Notification permission is required for alerts", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Text("Notification Preferences", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text(
+            "Receive local alerts on this device when events are synced from your paired devices.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotifPermission) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.2f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Permission Required", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+                        Text("Please grant notification permission to receive alerts.", style = MaterialTheme.typography.bodySmall)
+                    }
+                    Button(onClick = { permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }) {
+                        Text("Grant")
+                    }
+                }
+            }
+        }
+
+        HorizontalDivider()
+
+        NotificationToggleItem(
+            label = "Call Notifications",
+            checked = calls,
+            onCheckedChange = { viewModel.updateNotifSettings(it, sms, other) }
+        )
+
+        NotificationToggleItem(
+            label = "SMS Notifications",
+            checked = sms,
+            onCheckedChange = { viewModel.updateNotifSettings(calls, it, other) }
+        )
+
+        NotificationToggleItem(
+            label = "App Alert Notifications",
+            checked = other,
+            onCheckedChange = { viewModel.updateNotifSettings(calls, sms, it) }
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Button(
+            onClick = { 
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotifPermission) {
+                    permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                } else {
+                    viewModel.sendTestNotification()
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.Default.Notifications, contentDescription = null)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Send Test Notification")
+        }
+    }
+}
+
+@Composable
+fun NotificationToggleItem(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onCheckedChange(!checked) }
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyLarge)
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 

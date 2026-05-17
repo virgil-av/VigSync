@@ -24,6 +24,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val useTls = appPreferences.useTls.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), false)
     val mqttVersion = appPreferences.mqttVersion.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), "5")
 
+    val notifCalls = appPreferences.notifCalls.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), true)
+    val notifSms = appPreferences.notifSms.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), true)
+    val notifOther = appPreferences.notifOther.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), true)
+
     val connectionState = mqttManager.connectionState
 
     fun saveServerConfig(url: String, port: String, user: String, pass: String, tls: Boolean, version: String) {
@@ -47,6 +51,20 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun disconnect() {
         mqttManager.disconnect()
+    }
+
+    fun updateNotifSettings(calls: Boolean, sms: Boolean, other: Boolean) {
+        viewModelScope.launch {
+            appPreferences.saveNotifSettings(calls, sms, other)
+        }
+    }
+
+    fun sendTestNotification() {
+        mqttManager.showNotification(
+            title = "Test Notification",
+            message = "This is a test alert from VigSync Client",
+            deviceName = "Local Device"
+        )
     }
 
     fun importFromJson(jsonString: String) {
