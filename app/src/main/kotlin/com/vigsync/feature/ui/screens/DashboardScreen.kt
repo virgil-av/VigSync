@@ -321,6 +321,7 @@ fun QRScannerDialog(onDismiss: () -> Unit, onResult: (String) -> Unit) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
+    var isScanning by remember { mutableStateOf(true) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -361,6 +362,11 @@ fun QRScannerDialog(onDismiss: () -> Unit, onResult: (String) -> Unit) {
                                 .build()
                                 .also {
                                     it.setAnalyzer(cameraExecutor) { imageProxy ->
+                                        if (!isScanning) {
+                                            imageProxy.close()
+                                            return@setAnalyzer
+                                        }
+
                                         val mediaImage = imageProxy.image
                                         if (mediaImage != null) {
                                             val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
@@ -368,7 +374,11 @@ fun QRScannerDialog(onDismiss: () -> Unit, onResult: (String) -> Unit) {
                                                 .addOnSuccessListener { barcodes ->
                                                     for (barcode in barcodes) {
                                                         barcode.rawValue?.let { result ->
-                                                            onResult(result)
+                                                            if (isScanning) {
+                                                                isScanning = false
+                                                                cameraProvider.unbindAll()
+                                                                onResult(result)
+                                                            }
                                                         }
                                                     }
                                                 }

@@ -110,7 +110,14 @@ class MqttManager private constructor(private val context: Context) {
             _connectionState.value = MqttConnectionState.CONNECTING
             mqttLogger.logSystemEvent("MQTT Connection", "Connecting to $url:$port (v$version, TLS=$tls)")
 
-            // First-time setup timeout safeguard
+            // 1. Validation Safeguard: SSL/TLS requires credentials
+            if (tls && (user.isBlank() || pass.isBlank())) {
+                mqttLogger.logSystemEvent("Validation Error", "SSL/TLS requires a Username and Password. Please update your settings.", isError = true)
+                _connectionState.value = MqttConnectionState.ERROR
+                return@launch
+            }
+
+            // 2. First-time setup timeout safeguard
             val timeoutJob = if (isFirstTime) {
                 launch {
                     delay(5000)
@@ -291,8 +298,16 @@ class MqttManager private constructor(private val context: Context) {
     }
 
     private fun handleConnectionError(t: Throwable) {
+        val errorMessage = t.message ?: "Unknown connection error"
         _connectionState.value = MqttConnectionState.ERROR
-        mqttLogger.logSystemEvent("MQTT Error", t.message ?: "Unknown connection error", isError = true)
+        mqttLogger.logSystemEvent("MQTT Error", errorMessage, isError = true)
+        
+        // Stop retrying if unauthorized - it's a configuration issue
+        if (errorMessage.contains("NOT_AUTHORIZED", ignoreCase = true)) {
+            mqttLogger.logSystemEvent("MQTT Safeguard", "Auth failure detected. Stopping reconnection loop.", isError = true)
+            disconnect()
+        }
+
         scope.launch {
             appPreferences.saveLastConnectedSuccess(false)
         }
