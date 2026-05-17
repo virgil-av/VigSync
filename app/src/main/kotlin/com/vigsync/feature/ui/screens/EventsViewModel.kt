@@ -19,27 +19,37 @@ class EventsViewModel(
     private val database = VigSyncDatabase.getInstance(application)
 
     // Reactive selection from Navigation SavedStateHandle
+    val pairedDevices = database.deviceDao().getAllDevices().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val selectedDevice: StateFlow<String?> = savedStateHandle.getStateFlow("deviceName", null)
     val selectedType: StateFlow<String?> = savedStateHandle.getStateFlow("eventType", null)
 
-    val devices: StateFlow<List<String>> = database.dao().getAllEvents()
-        .map { items -> 
-            items.map { it.sourceDeviceName }.distinct().filterNotNull().sorted()
-        }
-        .flowOn(Dispatchers.Default)
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
-            initialValue = emptyList()
-        )
+    val devices: StateFlow<List<String>> = combine(
+        database.dao().getAllEvents(),
+        database.deviceDao().getAllDevices()
+    ) { events, pairedDevices ->
+        events.map { event ->
+            val paired = pairedDevices.find { it.deviceId == event.sourceDeviceId }
+            paired?.customLabel ?: event.sourceDeviceName ?: "Unknown"
+        }.distinct().filterNotNull().sorted()
+    }
+    .flowOn(Dispatchers.Default)
+    .stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
 
     val events: StateFlow<List<EventEntity>> = combine(
         database.dao().getAllEvents(),
+        database.deviceDao().getAllDevices(),
         selectedDevice,
         selectedType
-    ) { allEvents, deviceFilter, typeFilter ->
+    ) { allEvents, pairedDevices, deviceFilter, typeFilter ->
         allEvents.filter { event ->
-            val matchesDevice = deviceFilter == null || event.sourceDeviceName == deviceFilter
+            val paired = pairedDevices.find { it.deviceId == event.sourceDeviceId }
+            val resolvedName = paired?.customLabel ?: event.sourceDeviceName
+            
+            val matchesDevice = deviceFilter == null || resolvedName == deviceFilter
             val matchesType = typeFilter == null || when(typeFilter) {
                 "CALL" -> event.type.contains("CALL")
                 else -> event.type == typeFilter

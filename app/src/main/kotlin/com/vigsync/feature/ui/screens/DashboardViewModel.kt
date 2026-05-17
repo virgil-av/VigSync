@@ -100,4 +100,11 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             mqttLogger.logSystemEvent("Device", "Removed device: ${device.deviceName}")
         }
     }
+
+    fun updateDeviceLabel(deviceId: String, label: String) {
+        viewModelScope.launch {
+            deviceDao.updateLabel(deviceId, label)
+            mqttLogger.logSystemEvent("Device", "Renamed device to: $label")
+        }
+    }
 }

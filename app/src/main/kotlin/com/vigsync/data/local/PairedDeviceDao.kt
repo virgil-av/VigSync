@@ -19,4 +19,7 @@ interface PairedDeviceDao {
 
     @Query("UPDATE paired_devices SET isOnline = :online, batteryLevel = :battery, lastSeen = :timestamp, isInitial = 0 WHERE deviceId = :id")
     suspend fun updateStatus(id: String, online: Boolean, battery: Int?, timestamp: Long)
+
+    @Query("UPDATE paired_devices SET customLabel = :label WHERE deviceId = :id")
+    suspend fun updateLabel(id: String, label: String)
 }

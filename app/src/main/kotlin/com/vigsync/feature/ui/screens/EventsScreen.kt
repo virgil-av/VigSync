@@ -33,6 +33,7 @@ fun EventsScreen(
     viewModel: EventsViewModel = viewModel()
 ) {
     val events by viewModel.events.collectAsState()
+    val pairedDevices by viewModel.pairedDevices.collectAsState()
     val devices by viewModel.devices.collectAsState()
     val selectedDevice by viewModel.selectedDevice.collectAsState()
     val selectedType by viewModel.selectedType.collectAsState()
@@ -150,7 +151,8 @@ fun EventsScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     items(events) { event ->
-                        EventCard(event)
+                        val paired = pairedDevices.find { it.deviceId == event.sourceDeviceId }
+                        EventCard(event, paired?.customLabel)
                     }
                 }
             }
@@ -190,15 +192,18 @@ fun EventTypeFilters(
 }
 
 @Composable
-fun EventCard(event: EventEntity) {
+fun EventCard(event: EventEntity, deviceLabel: String?) {
     val context = LocalContext.current
     val pm = context.packageManager
     val timeFormatter = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
     val time = timeFormatter.format(Date(event.timestamp))
+    
+    val resolvedDisplayName = deviceLabel ?: event.sourceDeviceName ?: "Unknown"
 
     var displayData = event.data
     var appLabel: String? = null
     var packageName: String? = null
+// ... rest of the logic
 
     // Unified Pipe-Delimited Parsing (Label|Package|Content)
     if (event.data.contains("|")) {
@@ -264,7 +269,7 @@ fun EventCard(event: EventEntity) {
                     .padding(8.dp)
             ) {
                 Text(
-                    text = event.sourceDeviceName ?: "Unknown",
+                    text = resolvedDisplayName,
                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSecondaryContainer,

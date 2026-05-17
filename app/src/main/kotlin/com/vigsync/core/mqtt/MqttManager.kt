@@ -331,7 +331,7 @@ class MqttManager private constructor(private val context: Context) {
                     }
 
                     if (shouldNotify) {
-                        val resolvedDeviceName = rawMessage.senderName ?: device?.deviceName ?: "Remote Device"
+                        val resolvedDeviceName = device?.customLabel ?: rawMessage.senderName ?: device?.deviceName ?: "Remote Device"
                         
                         val (title, body) = when {
                             rawMessage.type == "SMS" -> {

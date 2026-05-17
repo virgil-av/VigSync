@@ -13,5 +13,6 @@ data class PairedDeviceEntity(
     val isOnline: Boolean = false,
     val batteryLevel: Int? = null,
     val addedAt: Long = System.currentTimeMillis(),
-    val isInitial: Boolean = true
+    val isInitial: Boolean = true,
+    val customLabel: String? = null
 )

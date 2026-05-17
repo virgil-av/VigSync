@@ -171,7 +171,8 @@ fun DashboardScreen(
                             DeviceRow(
                                 device = device,
                                 isSyncing = syncingDevices.contains(device.deviceId),
-                                onDelete = { viewModel.removeDevice(device) }
+                                onDelete = { viewModel.removeDevice(device) },
+                                onRename = { newLabel -> viewModel.updateDeviceLabel(device.deviceId, newLabel) }
                             )
                             if (index < devices.size - 1) {
                                 HorizontalDivider(
@@ -207,9 +208,11 @@ fun DashboardScreen(
 fun DeviceRow(
     device: PairedDeviceEntity,
     isSyncing: Boolean,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onRename: (String) -> Unit
 ) {
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
     val timeFormatter = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
     
     val currentTime = System.currentTimeMillis()
@@ -240,7 +243,7 @@ fun DeviceRow(
         // Middle: Info
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = device.deviceName,
+                text = device.customLabel ?: device.deviceName,
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
@@ -296,18 +299,62 @@ fun DeviceRow(
             }
         }
 
-        // Right: Delete
-        IconButton(
-            onClick = { showDeleteConfirm = true },
-            modifier = Modifier.size(32.dp)
-        ) {
-            Icon(
-                Icons.Default.Delete, 
-                contentDescription = "Remove", 
-                modifier = Modifier.size(18.dp), 
-                tint = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)
-            )
+        // Right: Actions
+        Row {
+            IconButton(
+                onClick = { showRenameDialog = true },
+                modifier = Modifier.size(32.dp)
+            ) {
+                Icon(
+                    Icons.Default.Edit, 
+                    contentDescription = "Rename", 
+                    modifier = Modifier.size(18.dp), 
+                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
+                )
+            }
+
+            IconButton(
+                onClick = { showDeleteConfirm = true },
+                modifier = Modifier.size(32.dp)
+            ) {
+                Icon(
+                    Icons.Default.Delete, 
+                    contentDescription = "Remove", 
+                    modifier = Modifier.size(18.dp), 
+                    tint = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)
+                )
+            }
         }
+    }
+
+    if (showRenameDialog) {
+        var label by remember { mutableStateOf(device.customLabel ?: device.deviceName) }
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = false },
+            title = { Text("Rename Device") },
+            text = {
+                OutlinedTextField(
+                    value = label,
+                    onValueChange = { label = it },
+                    label = { Text("Custom Label") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onRename(label)
+                    showRenameDialog = false
+                }) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     if (showDeleteConfirm) {
