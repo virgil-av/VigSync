@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.SavedStateHandle
 import com.vigsync.data.local.VigSyncDatabase
 import com.vigsync.data.local.EventEntity
+import com.vigsync.data.prefs.AppPreferences
+import com.vigsync.core.crypto.EncryptionManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -22,7 +24,7 @@ class EventsViewModel(
 
     val devices: StateFlow<List<String>> = database.dao().getAllEvents()
         .map { items -> 
-            items.map { it.sourceDevice }.distinct().filterNotNull().sorted()
+            items.map { it.sourceDeviceName }.distinct().filterNotNull().sorted()
         }
         .flowOn(Dispatchers.Default)
         .stateIn(
@@ -37,7 +39,7 @@ class EventsViewModel(
         selectedType
     ) { allEvents, deviceFilter, typeFilter ->
         allEvents.filter { event ->
-            val matchesDevice = deviceFilter == null || event.sourceDevice == deviceFilter
+            val matchesDevice = deviceFilter == null || event.sourceDeviceName == deviceFilter
             val matchesType = typeFilter == null || when(typeFilter) {
                 "CALL" -> event.type.contains("CALL")
                 else -> event.type == typeFilter
@@ -67,6 +69,31 @@ class EventsViewModel(
     fun clearEventsForDevice(deviceName: String) {
         viewModelScope.launch {
             database.dao().clearEventsForDevice(deviceName)
+        }
+    }
+
+    fun repairEncryptedEvents() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val allEvents = database.dao().getAllEvents().first()
+            
+            allEvents.forEach { event ->
+                if (event.data.startsWith("[Encrypted] ")) {
+                    val base64 = event.data.removePrefix("[Encrypted] ")
+                    val deviceId = event.sourceDeviceId
+                    if (deviceId != null) {
+                        val device = database.deviceDao().getDeviceById(deviceId)
+                        val key = device?.sharedKey
+                        if (key != null) {
+                            try {
+                                val decrypted = EncryptionManager(key).decrypt(base64)
+                                if (decrypted != null) {
+                                    database.dao().insertEvent(event.copy(data = decrypted))
+                                }
+                            } catch (_: Exception) {}
+                        }
+                    }
+                }
+            }
         }
     }
 }

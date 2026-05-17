@@ -290,15 +290,21 @@ class MqttManager private constructor(private val context: Context) {
             try {
                 val json = Json { ignoreUnknownKeys = true }
                 val rawMessage = json.decodeFromString<RawMessage>(payload)
-                val sharedKey = appPreferences.sharedKey.first() ?: ""
                 
                 if (topic.contains("/events/")) {
-                    val decryptedData = if (rawMessage.data != null && sharedKey.isNotEmpty()) {
+                    val deviceId = topic.split("/").last()
+                    val device = VigSyncDatabase.getInstance(context).deviceDao().getDeviceById(deviceId)
+                    val deviceKey = device?.sharedKey ?: ""
+                    
+                    val decryptedData = if (rawMessage.data != null && deviceKey.isNotEmpty()) {
                         try {
-                            EncryptionManager(sharedKey).decrypt(rawMessage.data) ?: rawMessage.data
+                            EncryptionManager(deviceKey).decrypt(rawMessage.data) ?: rawMessage.data
                         } catch (e: Exception) {
-                            mqttLogger.logSystemEvent("Decryption Error", "Failed to decrypt data: ${e.message}", isError = true)
-                            "[Encrypted] ${rawMessage.data}"
+                            if (rawMessage.data.length > 20 && !rawMessage.data.contains(" ")) {
+                                "[Encrypted] ${rawMessage.data}"
+                            } else {
+                                rawMessage.data
+                            }
                         }
                     } else {
                         rawMessage.data ?: ""
@@ -310,7 +316,8 @@ class MqttManager private constructor(private val context: Context) {
                         timestamp = rawMessage.timestamp,
                         syncStatus = com.vigsync.core.models.SyncStatus.RECEIVED,
                         direction = com.vigsync.core.models.EventDirection.REMOTE,
-                        sourceDevice = rawMessage.senderName ?: "Remote Device",
+                        sourceDeviceId = deviceId,
+                        sourceDeviceName = rawMessage.senderName ?: device?.deviceName ?: "Remote Device",
                         payloadHash = "${topic}_${rawMessage.timestamp}".hashCode().toString()
                     )
                     

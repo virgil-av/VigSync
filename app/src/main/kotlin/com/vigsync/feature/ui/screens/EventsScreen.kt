@@ -111,6 +111,17 @@ fun EventsScreen(
                                     leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp)) }
                                 )
                             }
+
+                            HorizontalDivider()
+
+                            DropdownMenuItem(
+                                text = { Text("Repair & Redecrypt") },
+                                onClick = {
+                                    viewModel.repairEncryptedEvents()
+                                    clearMenuExpanded = false
+                                },
+                                leadingIcon = { Icon(Icons.Default.Build, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                            )
                         }
                     }
                 }
@@ -189,21 +200,25 @@ fun EventCard(event: EventEntity) {
     var appLabel: String? = null
     var packageName: String? = null
 
-    // Unified Pipe-Delimited Parsing
+    // Unified Pipe-Delimited Parsing (Label|Package|Content)
     if (event.data.contains("|")) {
-        val parts = event.data.split("|", limit = 3)
-        if (parts.size == 3) {
+        val parts = event.data.split("|")
+        if (parts.size >= 3) {
+            appLabel = parts[0]
             packageName = parts[1]
-            displayData = parts[2]
+            displayData = parts.drop(2).joinToString("|")
             
-            // Extract app name from package instead of using the raw label
-            appLabel = remember(packageName) {
+            // Refine app label from package if possible
+            val refinedLabel = remember(packageName) {
                 try {
                     val info = pm.getApplicationInfo(packageName, 0)
                     pm.getApplicationLabel(info).toString()
                 } catch (_: Exception) {
                     AppNameUtils.extractDisplayName(packageName)
                 }
+            }
+            if (refinedLabel != packageName) {
+                appLabel = refinedLabel
             }
         }
     }
@@ -249,7 +264,7 @@ fun EventCard(event: EventEntity) {
                     .padding(8.dp)
             ) {
                 Text(
-                    text = event.sourceDevice ?: "Unknown",
+                    text = event.sourceDeviceName ?: "Unknown",
                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSecondaryContainer,

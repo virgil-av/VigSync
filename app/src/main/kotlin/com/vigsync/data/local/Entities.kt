@@ -13,7 +13,8 @@ data class EventEntity(
     val timestamp: Long,
     val syncStatus: SyncStatus,
     val direction: EventDirection,
-    val sourceDevice: String?,
+    val sourceDeviceId: String?,
+    val sourceDeviceName: String?,
     val errorMessage: String? = null,
     val payloadHash: String // For deduplication
 )

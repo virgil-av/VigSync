@@ -17,13 +17,13 @@ interface VigSyncDao {
     @Query("SELECT COUNT(*) FROM events WHERE payloadHash = :hash")
     suspend fun countEventHash(hash: String): Int
 
-    @Query("SELECT COUNT(*) FROM events WHERE sourceDevice = :deviceName")
+    @Query("SELECT COUNT(*) FROM events WHERE sourceDeviceName = :deviceName")
     fun getEventCountForDevice(deviceName: String): Flow<Int>
 
     @Query("DELETE FROM events")
     suspend fun clearAllEvents()
 
-    @Query("DELETE FROM events WHERE sourceDevice = :deviceName")
+    @Query("DELETE FROM events WHERE sourceDeviceName = :deviceName")
     suspend fun clearEventsForDevice(deviceName: String)
 }
 
@@ -39,7 +39,7 @@ class Converters {
     fun toDirection(value: String) = EventDirection.valueOf(value)
 }
 
-@Database(entities = [EventEntity::class, MqttLogEntity::class, SystemLogEntity::class, PairedDeviceEntity::class], version = 11)
+@Database(entities = [EventEntity::class, MqttLogEntity::class, SystemLogEntity::class, PairedDeviceEntity::class], version = 12)
 @TypeConverters(Converters::class)
 abstract class VigSyncDatabase : RoomDatabase() {
     abstract fun dao(): VigSyncDao

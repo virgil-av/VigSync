@@ -59,6 +59,13 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                         tls = config.useTls ?: false,
                         version = "5" // Default to v5 for new setups
                     )
+                    // Also update global shared key for legacy compatibility
+                    appPreferences.savePairedDevice(
+                        id = config.deviceId,
+                        name = config.deviceName,
+                        prefix = config.topicPrefix,
+                        key = config.sharedKey
+                    )
                     onFirstDevice()
                 }
 
