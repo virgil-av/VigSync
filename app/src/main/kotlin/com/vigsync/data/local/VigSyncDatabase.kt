@@ -39,11 +39,12 @@ class Converters {
     fun toDirection(value: String) = EventDirection.valueOf(value)
 }
 
-@Database(entities = [EventEntity::class, MqttLogEntity::class, SystemLogEntity::class], version = 8)
+@Database(entities = [EventEntity::class, MqttLogEntity::class, SystemLogEntity::class, PairedDeviceEntity::class], version = 9)
 @TypeConverters(Converters::class)
 abstract class VigSyncDatabase : RoomDatabase() {
     abstract fun dao(): VigSyncDao
     abstract fun debugDao(): DebugLogDao
+    abstract fun deviceDao(): PairedDeviceDao
 
     companion object {
         @Volatile

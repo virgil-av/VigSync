@@ -153,7 +153,7 @@ class MqttManager private constructor(private val context: Context) {
                     handleConnectionSuccess()
                     mqttLogger.logSystemEvent("MQTT Connection", "v5 Connected (Session Present: ${ack.isSessionPresent})")
                     setupIncomingFlowV5()
-                    subscribeToPairedDevice()
+                    subscribeToDevices()
                 }
             }
     }
@@ -193,7 +193,7 @@ class MqttManager private constructor(private val context: Context) {
                     handleConnectionSuccess()
                     mqttLogger.logSystemEvent("MQTT Connection", "v3 Connected")
                     setupIncomingFlowV3()
-                    subscribeToPairedDevice()
+                    subscribeToDevices()
                 }
             }
     }
@@ -249,6 +249,15 @@ class MqttManager private constructor(private val context: Context) {
                     
                     VigSyncDatabase.getInstance(context).dao().insertEvent(event)
                     mqttLogger.logSystemEvent("MQTT Message", "Processed and saved event: ${event.type}")
+                } else if (topic.contains("/status/")) {
+                    val deviceId = topic.split("/").last()
+                    VigSyncDatabase.getInstance(context).deviceDao().updateStatus(
+                        id = deviceId,
+                        online = true,
+                        battery = rawMessage.batteryLevel,
+                        timestamp = System.currentTimeMillis()
+                    )
+                    mqttLogger.logSystemEvent("MQTT Status", "Updated status for $deviceId (Battery: ${rawMessage.batteryLevel}%)")
                 }
             } catch (e: Exception) {
                 mqttLogger.logSystemEvent("MQTT Error", "Failed to process message: ${e.message}", isError = true)
@@ -288,30 +297,31 @@ class MqttManager private constructor(private val context: Context) {
         }
     }
 
-    private fun subscribeToPairedDevice() {
+    private fun subscribeToDevices() {
         scope.launch {
-            val deviceId = appPreferences.pairedDeviceId.first()
-            val topicPrefix = appPreferences.pairedTopicPrefix.first()
+            val devices = VigSyncDatabase.getInstance(context).deviceDao().getAllDevices().first()
 
-            if (!deviceId.isNullOrEmpty() && !topicPrefix.isNullOrEmpty()) {
-                val statusTopic = "$topicPrefix/status/$deviceId"
-                val eventsTopic = "$topicPrefix/events/$deviceId"
-
-                mqttLogger.logSystemEvent("MQTT Subscription", "Subscribing to $deviceId")
-                
+            if (devices.isNotEmpty()) {
                 val qos = com.hivemq.client.mqtt.datatypes.MqttQos.AT_LEAST_ONCE
                 
-                client5?.toAsync()?.let { c ->
-                    c.subscribeWith().topicFilter(statusTopic).qos(qos).send()
-                    c.subscribeWith().topicFilter(eventsTopic).qos(qos).send()
-                }
+                devices.forEach { device ->
+                    val statusTopic = "${device.topicPrefix}/status/${device.deviceId}"
+                    val eventsTopic = "${device.topicPrefix}/events/${device.deviceId}"
 
-                client3?.toAsync()?.let { c ->
-                    c.subscribeWith().topicFilter(statusTopic).qos(qos).send()
-                    c.subscribeWith().topicFilter(eventsTopic).qos(qos).send()
+                    mqttLogger.logSystemEvent("MQTT Subscription", "Subscribing to ${device.deviceName}")
+                    
+                    client5?.toAsync()?.let { c ->
+                        c.subscribeWith().topicFilter(statusTopic).qos(qos).send()
+                        c.subscribeWith().topicFilter(eventsTopic).qos(qos).send()
+                    }
+
+                    client3?.toAsync()?.let { c ->
+                        c.subscribeWith().topicFilter(statusTopic).qos(qos).send()
+                        c.subscribeWith().topicFilter(eventsTopic).qos(qos).send()
+                    }
                 }
             } else {
-                mqttLogger.logSystemEvent("MQTT Subscription", "No paired device found to subscribe")
+                mqttLogger.logSystemEvent("MQTT Subscription", "No paired devices found to subscribe")
             }
         }
     }

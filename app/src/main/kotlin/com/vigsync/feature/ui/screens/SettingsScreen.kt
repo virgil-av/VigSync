@@ -355,13 +355,28 @@ fun MqttConfigTab(viewModel: SettingsViewModel) {
             )
         }
 
+        val isSslEnabled = tls || port == "8883"
+        val isAuthMissing = isSslEnabled && (user.isBlank() || pass.isBlank())
+
+        if (isSslEnabled) {
+            Text(
+                text = "SSL/TLS requires a Username and Password.",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (isAuthMissing) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(horizontal = 4.dp)
+            )
+        }
+
         Button(
             onClick = { 
                 viewModel.saveServerConfig(url, port, user, pass, tls, version)
                 viewModel.connect()
             },
             modifier = Modifier.fillMaxWidth(),
-            enabled = connectionState != MqttConnectionState.CONNECTING && connectionState != MqttConnectionState.CONNECTED
+            enabled = connectionState != MqttConnectionState.CONNECTING && 
+                      connectionState != MqttConnectionState.CONNECTED &&
+                      !isAuthMissing
         ) {
             Icon(Icons.Default.CloudSync, contentDescription = null)
             Spacer(modifier = Modifier.width(8.dp))
