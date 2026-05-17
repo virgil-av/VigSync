@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vigsync.data.local.EventEntity
 import com.vigsync.core.models.SyncStatus
+import com.vigsync.core.utils.AppNameUtils
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -148,7 +149,7 @@ fun EventCard(event: EventEntity) {
                     val info = pm.getApplicationInfo(packageName, 0)
                     pm.getApplicationLabel(info).toString()
                 } catch (_: Exception) {
-                    parts[0] // fallback to the raw label if lookup fails
+                    AppNameUtils.extractDisplayName(packageName)
                 }
             }
         }
