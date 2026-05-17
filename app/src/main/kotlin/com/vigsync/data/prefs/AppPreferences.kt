@@ -19,6 +19,8 @@ class AppPreferences(private val context: Context) {
         val BROKER_PASS = stringPreferencesKey("server_broker_pass")
         val SHARED_KEY = stringPreferencesKey("shared_key")
         val USE_TLS = booleanPreferencesKey("use_tls")
+        val MQTT_VERSION = stringPreferencesKey("mqtt_version")
+        val LAST_CONNECTED_SUCCESS = booleanPreferencesKey("last_connected_success")
 
         // Monitoring Notification Controls
         val NOTIF_CALLS = booleanPreferencesKey("notif_calls")
@@ -53,15 +55,22 @@ class AppPreferences(private val context: Context) {
     val brokerPass: Flow<String> = context.dataStore.data.map { it[BROKER_PASS] ?: "" }
     val sharedKey: Flow<String?> = context.dataStore.data.map { it[SHARED_KEY] }
     val useTls: Flow<Boolean> = context.dataStore.data.map { it[USE_TLS] ?: false }
+    val mqttVersion: Flow<String> = context.dataStore.data.map { it[MQTT_VERSION] ?: "5" }
+    val lastConnectedSuccess: Flow<Boolean> = context.dataStore.data.map { it[LAST_CONNECTED_SUCCESS] ?: false }
 
-    suspend fun saveServerConfig(url: String, port: String, user: String, pass: String, tls: Boolean) {
+    suspend fun saveServerConfig(url: String, port: String, user: String, pass: String, tls: Boolean, version: String) {
         context.dataStore.edit {
             it[BROKER_URL] = url
             it[BROKER_PORT] = port
             it[BROKER_USER] = user
             it[BROKER_PASS] = pass
             it[USE_TLS] = tls
+            it[MQTT_VERSION] = version
         }
+    }
+
+    suspend fun saveLastConnectedSuccess(success: Boolean) {
+        context.dataStore.edit { it[LAST_CONNECTED_SUCCESS] = success }
     }
 
     val notifCalls: Flow<Boolean> = context.dataStore.data.map { it[NOTIF_CALLS] ?: true }

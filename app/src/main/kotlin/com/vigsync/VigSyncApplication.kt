@@ -3,6 +3,7 @@ package com.vigsync
 import android.app.Application
 import android.util.Log
 import com.vigsync.core.SyncManager
+import com.vigsync.core.mqtt.MqttManager
 
 class VigSyncApplication : Application() {
     
@@ -11,6 +12,9 @@ class VigSyncApplication : Application() {
         private set
 
     lateinit var crashHandler: com.vigsync.core.GlobalCrashHandler
+        private set
+
+    lateinit var mqttManager: MqttManager
         private set
 
     override fun onCreate() {
@@ -23,6 +27,10 @@ class VigSyncApplication : Application() {
         crashHandler.checkAndLogLastCrash()
 
         syncManager = SyncManager.getInstance(this)
+        mqttManager = MqttManager.getInstance(this)
+
+        // Trigger auto-connect if last connection was successful
+        mqttManager.autoConnectIfNeeded()
     }
 
     companion object {

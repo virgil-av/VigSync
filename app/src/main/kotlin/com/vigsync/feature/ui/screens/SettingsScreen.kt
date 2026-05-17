@@ -131,7 +131,7 @@ fun SettingsDialog(
                 topBar = {
                     TopAppBar(
                         title = { 
-                            Text("MQTT Settings")
+                            Text(if (section == SettingsSection.MQTT_CONFIG) "MQTT Settings" else "MQTT Debugging")
                         },
                         navigationIcon = {
                             IconButton(onClick = onDismiss) {
@@ -160,6 +160,7 @@ fun MqttConfigTab(viewModel: SettingsViewModel) {
     val savedUser by viewModel.brokerUser.collectAsState()
     val savedPass by viewModel.brokerPass.collectAsState()
     val savedTls by viewModel.useTls.collectAsState()
+    val savedVersion by viewModel.mqttVersion.collectAsState()
     val connectionState by viewModel.connectionState.collectAsState()
 
     var url by remember(savedUrl) { mutableStateOf(savedUrl) }
@@ -167,8 +168,10 @@ fun MqttConfigTab(viewModel: SettingsViewModel) {
     var user by remember(savedUser) { mutableStateOf(savedUser) }
     var pass by remember(savedPass) { mutableStateOf(savedPass) }
     var tls by remember(savedTls) { mutableStateOf(savedTls) }
+    var version by remember(savedVersion) { mutableStateOf(savedVersion) }
 
-    var expanded by remember { mutableStateOf(false) }
+    var securityExpanded by remember { mutableStateOf(false) }
+    var versionExpanded by remember { mutableStateOf(false) }
 
     val noAutoCorrect = KeyboardOptions(
         autoCorrect = false,
@@ -201,34 +204,34 @@ fun MqttConfigTab(viewModel: SettingsViewModel) {
                 value = port,
                 onValueChange = { port = it },
                 label = { Text("Port") },
-                modifier = Modifier.weight(0.4f),
+                modifier = Modifier.weight(0.25f),
                 singleLine = true,
                 keyboardOptions = noAutoCorrect.copy(keyboardType = KeyboardType.Number)
             )
 
             ExposedDropdownMenuBox(
-                expanded = expanded,
-                onExpandedChange = { expanded = !expanded },
-                modifier = Modifier.weight(0.6f)
+                expanded = securityExpanded,
+                onExpandedChange = { securityExpanded = !securityExpanded },
+                modifier = Modifier.weight(0.4f)
             ) {
                 OutlinedTextField(
                     value = if (tls) "SSL/TLS" else "None",
                     onValueChange = {},
                     readOnly = true,
                     label = { Text("Security") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = securityExpanded) },
                     modifier = Modifier.menuAnchor()
                 )
                 ExposedDropdownMenu(
-                    expanded = expanded,
-                    onDismissRequest = { expanded = false }
+                    expanded = securityExpanded,
+                    onDismissRequest = { securityExpanded = false }
                 ) {
                     DropdownMenuItem(
                         text = { Text("None") },
                         onClick = {
                             tls = false
                             port = "1883"
-                            expanded = false
+                            securityExpanded = false
                         }
                     )
                     DropdownMenuItem(
@@ -236,7 +239,41 @@ fun MqttConfigTab(viewModel: SettingsViewModel) {
                         onClick = {
                             tls = true
                             port = "8883"
-                            expanded = false
+                            securityExpanded = false
+                        }
+                    )
+                }
+            }
+
+            ExposedDropdownMenuBox(
+                expanded = versionExpanded,
+                onExpandedChange = { versionExpanded = !versionExpanded },
+                modifier = Modifier.weight(0.35f)
+            ) {
+                OutlinedTextField(
+                    value = if (version == "5") "v5 (Default)" else "v3",
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Version") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = versionExpanded) },
+                    modifier = Modifier.menuAnchor()
+                )
+                ExposedDropdownMenu(
+                    expanded = versionExpanded,
+                    onDismissRequest = { versionExpanded = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("v5 (Default)") },
+                        onClick = {
+                            version = "5"
+                            versionExpanded = false
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("v3") },
+                        onClick = {
+                            version = "3"
+                            versionExpanded = false
                         }
                     )
                 }
@@ -282,12 +319,12 @@ fun MqttConfigTab(viewModel: SettingsViewModel) {
                 }
                 MqttConnectionState.CONNECTED -> {
                     Surface(
-                        color = androidx.compose.ui.graphics.Color(0xFF4CAF50),
+                        color = Color(0xFF4CAF50),
                         shape = androidx.compose.foundation.shape.CircleShape,
                         modifier = Modifier.size(12.dp)
                     ) {}
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Connected", color = androidx.compose.ui.graphics.Color(0xFF4CAF50), fontWeight = FontWeight.Bold)
+                    Text("Connected", color = Color(0xFF4CAF50), fontWeight = FontWeight.Bold)
                 }
                 MqttConnectionState.DISCONNECTED, MqttConnectionState.IDLE -> {
                     Surface(
@@ -306,9 +343,18 @@ fun MqttConfigTab(viewModel: SettingsViewModel) {
             }
         }
 
+        if (connectionState == MqttConnectionState.ERROR) {
+            Text(
+                text = "Troubleshooting: Ensure the server is reachable or try switching to MQTT v3.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(horizontal = 4.dp)
+            )
+        }
+
         Button(
             onClick = { 
-                viewModel.saveServerConfig(url, port, user, pass, tls)
+                viewModel.saveServerConfig(url, port, user, pass, tls, version)
                 viewModel.connect()
             },
             modifier = Modifier.fillMaxWidth(),
