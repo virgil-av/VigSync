@@ -56,8 +56,7 @@ abstract class VigSyncDatabase : RoomDatabase() {
                     VigSyncDatabase::class.java,
                     "vigsync_db"
                 )
-                .fallbackToDestructiveMigration()
-                .fallbackToDestructiveMigrationOnDowngrade()
+                .fallbackToDestructiveMigration() // Critical fix for version 7 -> 8 transition
                 .build().also { INSTANCE = it }
             }
         }
