@@ -254,7 +254,7 @@ fun MqttConfigTab(viewModel: SettingsViewModel) {
                 modifier = Modifier.weight(0.35f)
             ) {
                 OutlinedTextField(
-                    value = if (version == "5") "v5 (Default)" else "v3",
+                    value = if (version == "5") "v5" else "v3",
                     onValueChange = {},
                     readOnly = true,
                     label = { Text("Version") },
@@ -266,7 +266,7 @@ fun MqttConfigTab(viewModel: SettingsViewModel) {
                     onDismissRequest = { versionExpanded = false }
                 ) {
                     DropdownMenuItem(
-                        text = { Text("v5 (Default)") },
+                        text = { Text("v5") },
                         onClick = {
                             version = "5"
                             versionExpanded = false
