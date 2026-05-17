@@ -1,4 +1,4 @@
-package com.vigsync.feature.ui.screens
+﻿package com.vigsync.feature.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -22,8 +22,8 @@ import androidx.core.graphics.drawable.toBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vigsync.data.local.EventEntity
+import com.vigsync.data.local.EventWithLabel
 import com.vigsync.core.models.SyncStatus
-import com.vigsync.core.utils.AppNameUtils
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -100,17 +100,6 @@ fun EventsScreen(
                                 },
                                 leadingIcon = { Icon(Icons.Default.DeleteForever, contentDescription = null, modifier = Modifier.size(18.dp)) }
                             )
-
-                            if (selectedDevice != null) {
-                                DropdownMenuItem(
-                                    text = { Text("Clear for $selectedDevice") },
-                                    onClick = {
-                                        viewModel.clearEventsForDevice(selectedDevice!!)
-                                        clearMenuExpanded = false
-                                    },
-                                    leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp)) }
-                                )
-                            }
                         }
                     }
                 }
@@ -138,8 +127,8 @@ fun EventsScreen(
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(events) { event ->
-                        EventCard(event)
+                    items(events) { item ->
+                        EventCard(item)
                     }
                 }
             }
@@ -179,7 +168,8 @@ fun EventTypeFilters(
 }
 
 @Composable
-fun EventCard(event: EventEntity) {
+fun EventCard(item: EventWithLabel) {
+    val event = item.event
     val context = LocalContext.current
     val pm = context.packageManager
     val timeFormatter = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
@@ -202,7 +192,7 @@ fun EventCard(event: EventEntity) {
                     val info = pm.getApplicationInfo(packageName, 0)
                     pm.getApplicationLabel(info).toString()
                 } catch (_: Exception) {
-                    AppNameUtils.extractDisplayName(packageName)
+                    parts[0] // fallback to the raw label if lookup fails
                 }
             }
         }
@@ -240,7 +230,7 @@ fun EventCard(event: EventEntity) {
         )
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
-            // Device badge in top-right
+            // Device badge in top-right (Resolved Alias/Name)
             Surface(
                 color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
                 shape = MaterialTheme.shapes.extraSmall,
@@ -249,7 +239,7 @@ fun EventCard(event: EventEntity) {
                     .padding(8.dp)
             ) {
                 Text(
-                    text = event.sourceDevice ?: "Unknown",
+                    text = item.resolvedDeviceName,
                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSecondaryContainer,

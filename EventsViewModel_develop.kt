@@ -1,11 +1,11 @@
-package com.vigsync.feature.ui.screens
+﻿package com.vigsync.feature.ui.screens
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.SavedStateHandle
+import com.vigsync.core.mqtt.MqttLogger
 import com.vigsync.data.local.VigSyncDatabase
-import com.vigsync.data.local.EventEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -20,9 +20,9 @@ class EventsViewModel(
     val selectedDevice: StateFlow<String?> = savedStateHandle.getStateFlow("deviceName", null)
     val selectedType: StateFlow<String?> = savedStateHandle.getStateFlow("eventType", null)
 
-    val devices: StateFlow<List<String>> = database.dao().getAllEvents()
+    val devices = database.dao().getAllEventsWithLabels()
         .map { items -> 
-            items.map { it.sourceDevice }.distinct().filterNotNull().sorted()
+            items.map { it.resolvedDeviceName }.distinct().sorted()
         }
         .flowOn(Dispatchers.Default)
         .stateIn(
@@ -31,20 +31,21 @@ class EventsViewModel(
             initialValue = emptyList()
         )
 
-    val events: StateFlow<List<EventEntity>> = combine(
-        database.dao().getAllEvents(),
-        selectedDevice,
-        selectedType
-    ) { allEvents, deviceFilter, typeFilter ->
-        allEvents.filter { event ->
-            val matchesDevice = deviceFilter == null || event.sourceDevice == deviceFilter
+    val events = combine(database.dao().getAllEventsWithLabels(), selectedDevice, selectedType) { allEvents, deviceFilter, typeFilter ->
+        val filtered = allEvents.filter { item ->
+            val matchesDevice = deviceFilter == null || item.resolvedDeviceName == deviceFilter
             val matchesType = typeFilter == null || when(typeFilter) {
-                "CALL" -> event.type.contains("CALL")
-                else -> event.type == typeFilter
+                "CALL" -> item.event.type.contains("CALL")
+                else -> item.event.type == typeFilter
             }
             matchesDevice && matchesType
-        }.distinctBy { it.timestamp to it.data }
-    }.stateIn(
+        }
+        
+        // Deduplication Logic: Group by timestamp and data, take first of each group
+        filtered.distinctBy { it.event.timestamp to it.event.data }
+    }
+    .flowOn(Dispatchers.Default)
+    .stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyList()
@@ -61,6 +62,7 @@ class EventsViewModel(
     fun clearEvents() {
         viewModelScope.launch {
             database.dao().clearAllEvents()
+            MqttLogger.clear()
         }
     }
 
