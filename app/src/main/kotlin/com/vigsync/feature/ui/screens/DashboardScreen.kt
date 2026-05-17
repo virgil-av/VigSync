@@ -54,6 +54,9 @@ import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.delay
 
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(
@@ -103,33 +106,83 @@ fun DashboardScreen(
             )
         }
     ) { innerPadding ->
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(2),
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .verticalScroll(rememberScrollState())
                 .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Paired Devices
-            items(devices) { device ->
-                DeviceCard(
-                    device = device,
-                    isSyncing = syncingDevices.contains(device.deviceId),
-                    onDelete = { viewModel.removeDevice(device) }
-                )
-            }
-
-            // Add Device Card
-            item {
-                AddDeviceCard(onClick = {
-                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                        showScanner = true
-                    } else {
-                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(modifier = Modifier.padding(bottom = 8.dp)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Paired Devices",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        
+                        TextButton(
+                            onClick = {
+                                if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                                    showScanner = true
+                                } else {
+                                    cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                                }
+                            }
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Add Device")
+                        }
                     }
-                })
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.outlineVariant
+                    )
+
+                    if (devices.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(32.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "No devices paired yet",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.outline
+                            )
+                        }
+                    } else {
+                        devices.forEachIndexed { index, device ->
+                            DeviceRow(
+                                device = device,
+                                isSyncing = syncingDevices.contains(device.deviceId),
+                                onDelete = { viewModel.removeDevice(device) }
+                            )
+                            if (index < devices.size - 1) {
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(horizontal = 16.dp),
+                                    thickness = 0.5.dp,
+                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -151,40 +204,7 @@ fun DashboardScreen(
 }
 
 @Composable
-fun AddDeviceCard(onClick: () -> Unit) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(160.dp)
-            .clickable { onClick() },
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
-        ),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
-    ) {
-        Column(
-            modifier = Modifier.fillMaxSize(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Icon(
-                Icons.Default.Add,
-                contentDescription = null,
-                modifier = Modifier.size(48.dp),
-                tint = MaterialTheme.colorScheme.primary
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                "Add Device",
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
-            )
-        }
-    }
-}
-
-@Composable
-fun DeviceCard(
+fun DeviceRow(
     device: PairedDeviceEntity,
     isSyncing: Boolean,
     onDelete: () -> Unit
@@ -197,106 +217,96 @@ fun DeviceCard(
     val effectiveOnline = device.isOnline && isRecentlySeen
     val isWaiting = isSyncing || device.isInitial
 
-    Card(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(160.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isWaiting) MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f)
-                             else MaterialTheme.colorScheme.surface
-        ),
-        border = if (isWaiting) androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.2f))
-                 else null,
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
-            IconButton(
-                onClick = { showDeleteConfirm = true },
-                modifier = Modifier.align(Alignment.TopEnd).padding(4.dp)
-            ) {
-                Icon(Icons.Default.Delete, contentDescription = "Remove", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.outline)
-            }
+        // Left: Icon
+        if (isWaiting) {
+            SyncingAnimation(size = 24.dp)
+        } else {
+            Icon(
+                Icons.Default.Smartphone,
+                contentDescription = null,
+                modifier = Modifier.size(24.dp),
+                tint = if (effectiveOnline) Color(0xFF4CAF50) else Color.Gray
+            )
+        }
 
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
+        Spacer(modifier = Modifier.width(16.dp))
+
+        // Middle: Info
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = device.deviceName,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 if (isWaiting) {
-                    SyncingAnimation()
-                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        if (isSyncing) "Syncing..." else "Waiting for status...",
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.secondary,
-                        fontSize = 12.sp,
-                        textAlign = TextAlign.Center
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        "This might take up to 2 minutes to sync...",
+                        text = if (isSyncing) "Syncing..." else "Waiting for status...",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.outline,
-                        textAlign = TextAlign.Center,
-                        fontSize = 10.sp,
-                        lineHeight = 12.sp
+                        color = MaterialTheme.colorScheme.secondary
                     )
                 } else {
-                    Icon(
-                        Icons.Default.Smartphone,
-                        contentDescription = null,
-                        modifier = Modifier.size(40.dp),
-                        tint = if (effectiveOnline) Color(0xFF4CAF50) else Color.Gray
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Surface(
+                        modifier = Modifier.size(6.dp),
+                        shape = CircleShape,
+                        color = if (effectiveOnline) Color(0xFF4CAF50) else Color.Gray
+                    ) {}
+                    Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        device.deviceName,
-                        fontWeight = FontWeight.ExtraBold,
-                        maxLines = 1,
-                        fontSize = 14.sp,
-                        overflow = TextOverflow.Ellipsis
+                        text = if (effectiveOnline) "Online" else "Offline",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Surface(
-                            modifier = Modifier.size(8.dp),
-                            shape = CircleShape,
-                            color = if (effectiveOnline) Color(0xFF4CAF50) else Color.Gray
-                        ) {}
-                        Spacer(modifier = Modifier.width(6.dp))
+                    
+                    if (device.batteryLevel != null) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Icon(
+                            imageVector = Icons.Default.BatteryFull,
+                            contentDescription = null,
+                            modifier = Modifier.size(10.dp),
+                            tint = MaterialTheme.colorScheme.outline
+                        )
+                        Spacer(modifier = Modifier.width(2.dp))
                         Text(
-                            text = if (effectiveOnline) "Online" else "Offline",
+                            text = "${device.batteryLevel}%",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.outline
                         )
-                        if (device.batteryLevel != null) {
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Icon(
-                                imageVector = Icons.Default.BatteryFull,
-                                contentDescription = null,
-                                modifier = Modifier.size(12.dp),
-                                tint = MaterialTheme.colorScheme.outline
-                            )
-                            Spacer(modifier = Modifier.width(2.dp))
-                            Text(
-                                text = "${device.batteryLevel}%",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.outline,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
                     }
+
                     if (effectiveOnline) {
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = timeFormatter.format(Date(device.lastSeen)),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.outline,
-                            fontSize = 10.sp
+                            fontSize = 9.sp
                         )
                     }
                 }
             }
+        }
+
+        // Right: Delete
+        IconButton(
+            onClick = { showDeleteConfirm = true },
+            modifier = Modifier.size(32.dp)
+        ) {
+            Icon(
+                Icons.Default.Delete, 
+                contentDescription = "Remove", 
+                modifier = Modifier.size(18.dp), 
+                tint = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)
+            )
         }
     }
 
@@ -323,7 +333,7 @@ fun DeviceCard(
 }
 
 @Composable
-fun SyncingAnimation() {
+fun SyncingAnimation(size: androidx.compose.ui.unit.Dp = 32.dp) {
     val infiniteTransition = rememberInfiniteTransition()
     val rotation by infiniteTransition.animateFloat(
         initialValue = 0f,
@@ -338,7 +348,7 @@ fun SyncingAnimation() {
         Icons.Default.Sync,
         contentDescription = null,
         modifier = Modifier
-            .size(32.dp)
+            .size(size)
             .rotate(rotation),
         tint = MaterialTheme.colorScheme.secondary
     )
