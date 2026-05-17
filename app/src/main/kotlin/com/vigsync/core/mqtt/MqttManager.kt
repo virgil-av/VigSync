@@ -105,7 +105,6 @@ class MqttManager private constructor(private val context: Context) {
         val builder = NotificationCompat.Builder(context, NOTIF_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setContentTitle(title)
-            .setContentText(message)
             .setSubText(deviceName)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
