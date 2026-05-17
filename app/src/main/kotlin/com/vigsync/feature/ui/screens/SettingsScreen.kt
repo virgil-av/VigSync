@@ -20,7 +20,17 @@ import com.vigsync.core.models.MqttConnectionState
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
-enum class SettingsSection { MQTT_CONFIG }
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.automirrored.filled.Notes
+import androidx.compose.ui.graphics.Color
+import com.vigsync.data.local.MqttLogEntity
+import com.vigsync.data.local.SystemLogEntity
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+enum class SettingsSection { MQTT_CONFIG, MQTT_DEBUG }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -45,6 +55,13 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                 subtitle = "Broker and Connection configuration",
                 icon = Icons.Default.Dns,
                 onClick = { activeDialog = SettingsSection.MQTT_CONFIG }
+            )
+
+            SettingsMenuItem(
+                title = "MQTT Debugging",
+                subtitle = "View message logs and system events",
+                icon = Icons.AutoMirrored.Filled.Notes,
+                onClick = { activeDialog = SettingsSection.MQTT_DEBUG }
             )
         }
     }
@@ -125,7 +142,10 @@ fun SettingsDialog(
                 }
             ) { padding ->
                 Box(modifier = Modifier.padding(padding).fillMaxSize()) {
-                    MqttConfigTab(viewModel)
+                    when (section) {
+                        SettingsSection.MQTT_CONFIG -> MqttConfigTab(viewModel)
+                        SettingsSection.MQTT_DEBUG -> MqttDebugTab()
+                    }
                 }
             }
         }
@@ -310,5 +330,189 @@ fun MqttConfigTab(viewModel: SettingsViewModel) {
                 Text("Disconnect")
             }
         }
+    }
+}
+
+@Composable
+fun MqttDebugTab(viewModel: DebugViewModel = viewModel()) {
+    var selectedTab by remember { mutableIntStateOf(0) }
+    val tabs = listOf("Logs", "System")
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        TabRow(selectedTabIndex = selectedTab) {
+            tabs.forEachIndexed { index, title ->
+                Tab(
+                    selected = selectedTab == index,
+                    onClick = { selectedTab = index },
+                    text = { Text(title) }
+                )
+            }
+        }
+
+        Box(modifier = Modifier.weight(1f)) {
+            when (selectedTab) {
+                0 -> MqttLogsList(viewModel)
+                1 -> SystemLogsList(viewModel)
+            }
+        }
+    }
+}
+
+@Composable
+fun MqttLogsList(viewModel: DebugViewModel) {
+    val logs by viewModel.mqttLogs.collectAsState()
+    val timeFormatter = remember { SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()) }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        if (logs.isEmpty()) {
+            EmptyDebugView("No MQTT logs yet")
+        } else {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(8.dp),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = { viewModel.clearMqttLogs() }) {
+                        Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Clear")
+                    }
+                }
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(logs) { log ->
+                        MqttLogItem(log, timeFormatter)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SystemLogsList(viewModel: DebugViewModel) {
+    val logs by viewModel.systemLogs.collectAsState()
+    val timeFormatter = remember { SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()) }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        if (logs.isEmpty()) {
+            EmptyDebugView("No system logs yet")
+        } else {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(8.dp),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = { viewModel.clearSystemLogs() }) {
+                        Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Clear")
+                    }
+                }
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(logs) { log ->
+                        SystemLogItem(log, timeFormatter)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun MqttLogItem(log: MqttLogEntity, formatter: SimpleDateFormat) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = if (log.isIncoming) Icons.Default.CallReceived else Icons.Default.CallMade,
+                        contentDescription = null,
+                        tint = if (log.isIncoming) Color(0xFF4CAF50) else Color(0xFF2196F3),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = log.topic,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Text(
+                    text = formatter.format(Date(log.timestamp)),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = log.payload,
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+            )
+        }
+    }
+}
+
+@Composable
+fun SystemLogItem(log: SystemLogEntity, formatter: SimpleDateFormat) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (log.isError) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.2f) 
+                             else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = log.event,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (log.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = formatter.format(Date(log.timestamp)),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+            }
+            if (!log.details.isNullOrEmpty()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = log.details,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun EmptyDebugView(message: String) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text(text = message, color = MaterialTheme.colorScheme.outline)
     }
 }
