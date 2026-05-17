@@ -148,6 +148,7 @@ class MqttManager private constructor(private val context: Context) {
                     handleConnectionSuccess()
                     mqttLogger.logSystemEvent("MQTT Connection", "v5 Connected (Session Present: ${ack.isSessionPresent})")
                     setupIncomingFlowV5()
+                    subscribeToPairedDevice()
                 }
             }
     }
@@ -187,6 +188,7 @@ class MqttManager private constructor(private val context: Context) {
                     handleConnectionSuccess()
                     mqttLogger.logSystemEvent("MQTT Connection", "v3 Connected")
                     setupIncomingFlowV3()
+                    subscribeToPairedDevice()
                 }
             }
     }
@@ -238,6 +240,34 @@ class MqttManager private constructor(private val context: Context) {
             
             _connectionState.value = MqttConnectionState.IDLE
             appPreferences.saveLastConnectedSuccess(false)
+        }
+    }
+
+    private fun subscribeToPairedDevice() {
+        scope.launch {
+            val deviceId = appPreferences.pairedDeviceId.first()
+            val topicPrefix = appPreferences.pairedTopicPrefix.first()
+
+            if (!deviceId.isNullOrEmpty() && !topicPrefix.isNullOrEmpty()) {
+                val statusTopic = "$topicPrefix/status/$deviceId"
+                val eventsTopic = "$topicPrefix/events/$deviceId"
+
+                mqttLogger.logSystemEvent("MQTT Subscription", "Subscribing to $deviceId")
+                
+                val qos = com.hivemq.client.mqtt.datatypes.MqttQos.AT_LEAST_ONCE
+                
+                client5?.toAsync()?.let { c ->
+                    c.subscribeWith().topicFilter(statusTopic).qos(qos).send()
+                    c.subscribeWith().topicFilter(eventsTopic).qos(qos).send()
+                }
+
+                client3?.toAsync()?.let { c ->
+                    c.subscribeWith().topicFilter(statusTopic).qos(qos).send()
+                    c.subscribeWith().topicFilter(eventsTopic).qos(qos).send()
+                }
+            } else {
+                mqttLogger.logSystemEvent("MQTT Subscription", "No paired device found to subscribe")
+            }
         }
     }
 

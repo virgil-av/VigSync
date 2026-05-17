@@ -21,6 +21,11 @@ class AppPreferences(private val context: Context) {
         val USE_TLS = booleanPreferencesKey("use_tls")
         val MQTT_VERSION = stringPreferencesKey("mqtt_version")
         val LAST_CONNECTED_SUCCESS = booleanPreferencesKey("last_connected_success")
+        
+        // Paired Device Info
+        val PAIRED_DEVICE_ID = stringPreferencesKey("paired_device_id")
+        val PAIRED_DEVICE_NAME = stringPreferencesKey("paired_device_name")
+        val PAIRED_TOPIC_PREFIX = stringPreferencesKey("paired_topic_prefix")
 
         // Monitoring Notification Controls
         val NOTIF_CALLS = booleanPreferencesKey("notif_calls")
@@ -57,6 +62,10 @@ class AppPreferences(private val context: Context) {
     val useTls: Flow<Boolean> = context.dataStore.data.map { it[USE_TLS] ?: false }
     val mqttVersion: Flow<String> = context.dataStore.data.map { it[MQTT_VERSION] ?: "5" }
     val lastConnectedSuccess: Flow<Boolean> = context.dataStore.data.map { it[LAST_CONNECTED_SUCCESS] ?: false }
+    
+    val pairedDeviceId: Flow<String?> = context.dataStore.data.map { it[PAIRED_DEVICE_ID] }
+    val pairedDeviceName: Flow<String?> = context.dataStore.data.map { it[PAIRED_DEVICE_NAME] }
+    val pairedTopicPrefix: Flow<String?> = context.dataStore.data.map { it[PAIRED_TOPIC_PREFIX] }
 
     suspend fun saveServerConfig(url: String, port: String, user: String, pass: String, tls: Boolean, version: String) {
         context.dataStore.edit {
@@ -71,6 +80,15 @@ class AppPreferences(private val context: Context) {
 
     suspend fun saveLastConnectedSuccess(success: Boolean) {
         context.dataStore.edit { it[LAST_CONNECTED_SUCCESS] = success }
+    }
+
+    suspend fun savePairedDevice(id: String?, name: String?, prefix: String?, key: String?) {
+        context.dataStore.edit {
+            if (id != null) it[PAIRED_DEVICE_ID] = id else it.remove(PAIRED_DEVICE_ID)
+            if (name != null) it[PAIRED_DEVICE_NAME] = name else it.remove(PAIRED_DEVICE_NAME)
+            if (prefix != null) it[PAIRED_TOPIC_PREFIX] = prefix else it.remove(PAIRED_TOPIC_PREFIX)
+            if (key != null) it[SHARED_KEY] = key else it.remove(SHARED_KEY)
+        }
     }
 
     val notifCalls: Flow<Boolean> = context.dataStore.data.map { it[NOTIF_CALLS] ?: true }

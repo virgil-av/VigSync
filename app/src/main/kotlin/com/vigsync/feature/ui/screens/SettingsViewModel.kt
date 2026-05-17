@@ -4,10 +4,13 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.vigsync.core.models.MqttConnectionState
+import com.vigsync.core.models.ImportConfig
+import com.vigsync.core.mqtt.MqttLogger
 import com.vigsync.core.mqtt.MqttManager
 import com.vigsync.data.prefs.AppPreferences
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
     private val appPreferences = AppPreferences(application)
@@ -35,5 +38,35 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun disconnect() {
         mqttManager.disconnect()
+    }
+
+    fun importFromJson(jsonString: String) {
+        viewModelScope.launch {
+            try {
+                val config = Json.decodeFromString<ImportConfig>(jsonString)
+                
+                // Update basic MQTT settings
+                appPreferences.saveServerConfig(
+                    url = config.brokerUrl ?: brokerUrl.value,
+                    port = config.port?.toString() ?: brokerPort.value,
+                    user = config.username ?: brokerUser.value,
+                    pass = config.password ?: brokerPass.value,
+                    tls = config.useTls ?: useTls.value,
+                    version = mqttVersion.value
+                )
+
+                // Update paired device info
+                appPreferences.savePairedDevice(
+                    id = config.deviceId,
+                    name = config.deviceName,
+                    prefix = config.topicPrefix,
+                    key = config.sharedKey
+                )
+                
+                MqttLogger.getInstance(getApplication()).logSystemEvent("JSON Import", "Successfully imported configuration for ${config.deviceName}")
+            } catch (e: Exception) {
+                MqttLogger.getInstance(getApplication()).logSystemEvent("JSON Import", "Failed to parse JSON: ${e.message}", isError = true)
+            }
+        }
     }
 }

@@ -1,5 +1,6 @@
 package com.vigsync.feature.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -185,6 +186,8 @@ fun MqttConfigTab(viewModel: SettingsViewModel) {
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        JsonImportCard(onImport = { viewModel.importFromJson(it) })
+
         Text("Broker Configuration", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         
         OutlinedTextField(
@@ -374,6 +377,61 @@ fun MqttConfigTab(viewModel: SettingsViewModel) {
                 Icon(Icons.Default.CloudOff, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Disconnect")
+            }
+        }
+    }
+}
+
+@Composable
+fun JsonImportCard(onImport: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    var jsonText by remember { mutableStateOf("") }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.2f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Input, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text("Import from JSON", fontWeight = FontWeight.Bold)
+                }
+                Icon(
+                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = null
+                )
+            }
+
+            if (expanded) {
+                Spacer(modifier = Modifier.height(16.dp))
+                OutlinedTextField(
+                    value = jsonText,
+                    onValueChange = { jsonText = it },
+                    label = { Text("Paste configuration JSON here") },
+                    modifier = Modifier.fillMaxWidth().height(150.dp),
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
+                    keyboardOptions = KeyboardOptions(autoCorrect = false)
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(
+                    onClick = {
+                        onImport(jsonText)
+                        jsonText = ""
+                        expanded = false
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = jsonText.isNotBlank()
+                ) {
+                    Text("Load Configuration")
+                }
             }
         }
     }
