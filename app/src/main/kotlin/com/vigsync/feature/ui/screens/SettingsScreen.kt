@@ -1,5 +1,9 @@
 package com.vigsync.feature.ui.screens
 
+import android.content.ClipboardManager
+import android.content.ClipData
+import android.content.Context
+import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -18,6 +22,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vigsync.core.models.MqttConnectionState
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
@@ -531,6 +536,7 @@ fun MqttLogsList(viewModel: DebugViewModel) {
 fun SystemLogsList(viewModel: DebugViewModel) {
     val logs by viewModel.systemLogs.collectAsState()
     val timeFormatter = remember { SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()) }
+    val context = LocalContext.current
 
     Box(modifier = Modifier.fillMaxSize()) {
         if (logs.isEmpty()) {
@@ -541,6 +547,22 @@ fun SystemLogsList(viewModel: DebugViewModel) {
                     modifier = Modifier.fillMaxWidth().padding(8.dp),
                     horizontalArrangement = Arrangement.End
                 ) {
+                    TextButton(onClick = {
+                        val logText = logs.joinToString("\n") { log ->
+                            "${timeFormatter.format(Date(log.timestamp))} | ${log.event} | ${log.details ?: ""}"
+                        }
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        val clip = ClipData.newPlainText("VigSync System Logs", logText)
+                        clipboard.setPrimaryClip(clip)
+                        Toast.makeText(context, "Logs copied to clipboard", Toast.LENGTH_SHORT).show()
+                    }) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Copy Log")
+                    }
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
                     TextButton(onClick = { viewModel.clearSystemLogs() }) {
                         Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(4.dp))
