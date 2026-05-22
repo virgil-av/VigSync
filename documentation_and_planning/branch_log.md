@@ -107,7 +107,7 @@ Continue hardening background survival: battery optimization UX, boot recovery, 
 
 ## 2026-05-22 23:42 EEST - Harden background survival and service state
 
-- Commit: `c56e739845f977cb8b1c699382f661943a23dec4`
+- Commit: `172bbe767b6c4040a9160f3df9e32e823f70c807`
 - Objective: make Android service recovery, background survival, network recovery, and foreground-service state deterministic.
 - Why: the service was previously restored heuristically from MQTT config, the dashboard polled static booleans after delays, and network callbacks could trigger duplicate reconnect work.
 
