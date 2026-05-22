@@ -68,3 +68,36 @@ Fix the local Android SDK/build-tools verification path first, then add Python u
 ### Recommended Next Task
 
 Add Python unit tests for `vigsync_consumer.py` spool flush, replay dedupe, malformed stream line handling, and config fallback.
+
+## 2026-05-22 23:14 EEST - Add Raspberry Pi bridge unit tests
+
+- Commit: pending documentation commit for this task.
+- Objective: add focused Python unit coverage for the Raspberry Pi bridge reliability behavior.
+- Why: the bridge is responsible for not losing phone-exported events during ADB/MQTT interruptions, so its spool, replay, malformed payload, and config fallback paths need fast local coverage without a phone, broker, or external Python test dependency.
+
+### Work Completed
+
+- Added stdlib `unittest` coverage under `rpi_script/tests/`.
+- Stubbed the minimal `paho.mqtt.client` module needed to import `vigsync_consumer.py` when local Python does not have `paho-mqtt` installed.
+- Added isolated temp-file tests for spool append, successful spool flush/removal, failed publish preservation, replay dedupe, malformed JSON skip, disconnected publish spooling, config fallback, and invalid ADB config protection.
+
+### Files Changed
+
+- `rpi_script/tests/test_vigsync_consumer.py`
+
+### Verification
+
+- Passed: `python3 -m unittest discover -s rpi_script/tests`
+- Passed: `python3 -m py_compile rpi_script/vigsync_consumer.py rpi_script/vigsync_manager.py rpi_script/vigsync_gui_client.py`
+- Passed: `./gradlew :app:testDebugUnitTest`
+- Passed: `./gradlew :app:compileDebugKotlin`
+- Passed: `./gradlew :app:lintDebug`
+- Remaining Android warnings are non-blocking and unchanged in character: deprecated Gradle/Android options, Room schema export warning, deprecated telephony APIs, and deprecated Compose auto-mirrored icons.
+
+### Known Blockers
+
+- Online push is still blocked by GitHub permissions for the current SSH identity: `Permission to virgil-av/VigSync.git denied to 24vlh`.
+
+### Recommended Next Task
+
+Improve Pi consumer durability with persistent read offsets or explicit acknowledged delivery tracking.
