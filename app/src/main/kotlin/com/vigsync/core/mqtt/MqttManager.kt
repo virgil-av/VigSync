@@ -34,6 +34,8 @@ class MqttManager {
     private var currentVersion: Int = 5
     private val connectionMutex = Mutex()
     private val pendingSubscriptions = mutableListOf<String>()
+    private val activeSubscriptions = mutableSetOf<String>()
+    private val pendingPublishes = MqttPublishQueue(MAX_PENDING_PUBLISHES)
 
     private var currentConfig: ConnectionConfig? = null
     private var pendingConfig: ConnectionConfig? = null
@@ -66,7 +68,8 @@ class MqttManager {
         username: String? = null,
         password: String? = null
     ) {
-        val newConfig = ConnectionConfig(brokerUrl, port, clientId, useTls, username, password)
+        val cleanUrl = normalizeBrokerUrl(brokerUrl)
+        val newConfig = ConnectionConfig(cleanUrl, port, clientId, useTls, username, password)
         
         connectionMutex.withLock {
             if (_connectionStatus.value == MqttConnectionStatus.CONNECTED && currentConfig == newConfig) {
@@ -81,11 +84,6 @@ class MqttManager {
 
             pendingConfig = newConfig
             _connectionStatus.value = MqttConnectionStatus.CONNECTING
-            val cleanUrl = brokerUrl
-                .replace("mqtt://", "", ignoreCase = true)
-                .replace("tcp://", "", ignoreCase = true)
-                .replace("ssl://", "", ignoreCase = true)
-                .trim()
 
             // Step 0: Kill any existing "Zombie" connections but KEEP subscriptions for now
             // as we might be reconnecting to the same broker or a known one.
@@ -116,6 +114,7 @@ class MqttManager {
                     dao.saveHostProtocol(HostProtocolEntity(cleanUrl, 5))
                     currentConfig = newConfig
                     pendingConfig = null
+                    flushQueuedPublishes()
                     return@withLock
                 }
                 if (i < 3) delay(2000)
@@ -129,6 +128,7 @@ class MqttManager {
                     dao.saveHostProtocol(HostProtocolEntity(cleanUrl, 3))
                     currentConfig = newConfig
                     pendingConfig = null
+                    flushQueuedPublishes()
                     return@withLock
                 }
                 if (i < 3) delay(2000)
@@ -139,6 +139,15 @@ class MqttManager {
             currentConfig = null
             pendingConfig = null
         }
+    }
+
+    private fun normalizeBrokerUrl(url: String): String {
+        return url
+            .replace("mqtt://", "", ignoreCase = true)
+            .replace("tcp://", "", ignoreCase = true)
+            .replace("ssl://", "", ignoreCase = true)
+            .trim()
+            .trimEnd('/')
     }
 
     private suspend fun tryConnectOnce(
@@ -173,14 +182,17 @@ class MqttManager {
             .identifier(clientId)
             .serverHost(url)
             .serverPort(port)
-            .simpleAuth()
-                .username(user ?: "")
-                .password(pass?.toByteArray() ?: ByteArray(0))
-                .applySimpleAuth()
             .automaticReconnect()
                 .initialDelay(1, TimeUnit.SECONDS)
                 .maxDelay(10, TimeUnit.SECONDS)
                 .applyAutomaticReconnect()
+
+        if (!user.isNullOrBlank()) {
+            builder = builder.simpleAuth()
+                .username(user)
+                .password(pass?.toByteArray() ?: ByteArray(0))
+                .applySimpleAuth()
+        }
 
         if (useTls) {
             MqttLogger.log("Enabling SSL/TLS with default system trust store...", "TRACE")
@@ -194,10 +206,14 @@ class MqttManager {
                 // Re-subscribe to pending topics on auto-reconnect
                 val subs = synchronized(pendingSubscriptions) { pendingSubscriptions.toList() }
                 subs.forEach { subscribe(appContext, it) }
+                flushQueuedPublishes()
             }
             .addDisconnectedListener { 
                 val reason = it.cause?.message ?: it.source.toString()
                 MqttLogger.log("Disconnected (v5): $reason", "ERROR")
+                synchronized(activeSubscriptions) {
+                    activeSubscriptions.clear()
+                }
                 _connectionStatus.value = if (it.source.toString().contains("RECONNECT")) MqttConnectionStatus.RECONNECTING else MqttConnectionStatus.DISCONNECTED
             }
             .buildAsync()
@@ -214,6 +230,7 @@ class MqttManager {
         return connectBuilder.send().thenApply {
             MqttLogger.log("Connected to v5 broker: $url", "INFO")
             _connectionStatus.value = MqttConnectionStatus.CONNECTED
+            flushQueuedPublishes()
             it
         }
     }
@@ -229,14 +246,17 @@ class MqttManager {
             .identifier(clientId)
             .serverHost(url)
             .serverPort(port)
-            .simpleAuth()
-                .username(user ?: "")
-                .password(pass?.toByteArray() ?: ByteArray(0))
-                .applySimpleAuth()
             .automaticReconnect()
                 .initialDelay(1, TimeUnit.SECONDS)
                 .maxDelay(10, TimeUnit.SECONDS)
                 .applyAutomaticReconnect()
+
+        if (!user.isNullOrBlank()) {
+            builder = builder.simpleAuth()
+                .username(user)
+                .password(pass?.toByteArray() ?: ByteArray(0))
+                .applySimpleAuth()
+        }
 
         if (useTls) {
             MqttLogger.log("Enabling SSL/TLS with default system trust store...", "TRACE")
@@ -250,10 +270,14 @@ class MqttManager {
                 // Re-subscribe to pending topics on auto-reconnect
                 val subs = synchronized(pendingSubscriptions) { pendingSubscriptions.toList() }
                 subs.forEach { subscribe(appContext, it) }
+                flushQueuedPublishes()
             }
             .addDisconnectedListener { 
                 val reason = it.cause?.message ?: "Normal Closure"
                 MqttLogger.log("Disconnected (v3): $reason", "ERROR")
+                synchronized(activeSubscriptions) {
+                    activeSubscriptions.clear()
+                }
                 _connectionStatus.value = if (reason.contains("RECONNECT", ignoreCase = true)) MqttConnectionStatus.RECONNECTING else MqttConnectionStatus.DISCONNECTED
             }
             .buildAsync()
@@ -269,6 +293,7 @@ class MqttManager {
         return connectBuilder.send().thenApply {
             MqttLogger.log("Connected to v3 broker: $url", "INFO")
             _connectionStatus.value = MqttConnectionStatus.CONNECTED
+            flushQueuedPublishes()
             it
         }
     }
@@ -286,6 +311,13 @@ class MqttManager {
             return CompletableFuture.completedFuture(null)
         }
 
+        synchronized(activeSubscriptions) {
+            if (activeSubscriptions.contains(topic)) {
+                return CompletableFuture.completedFuture(null)
+            }
+            activeSubscriptions.add(topic)
+        }
+
         return try {
             when (currentVersion) {
                 5 -> client5?.subscribeWith()
@@ -297,7 +329,15 @@ class MqttManager {
                             )
                         }
                     }
-                    ?.send()?.thenAccept { MqttLogger.log("Subscribed (v5) to $topic", "SUCCESS") }
+                    ?.send()?.thenAccept {
+                        MqttLogger.log("Subscribed (v5) to $topic", "SUCCESS")
+                    }?.exceptionally { error ->
+                        synchronized(activeSubscriptions) {
+                            activeSubscriptions.remove(topic)
+                        }
+                        MqttLogger.log("Subscribe failed (v5) for $topic: ${error.message}", "ERROR")
+                        null
+                    }
                 else -> client3?.subscribeWith()
                     ?.topicFilter(topic)
                     ?.callback { publish ->
@@ -307,9 +347,20 @@ class MqttManager {
                             )
                         }
                     }
-                    ?.send()?.thenAccept { MqttLogger.log("Subscribed (v3) to $topic", "SUCCESS") }
+                    ?.send()?.thenAccept {
+                        MqttLogger.log("Subscribed (v3) to $topic", "SUCCESS")
+                    }?.exceptionally { error ->
+                        synchronized(activeSubscriptions) {
+                            activeSubscriptions.remove(topic)
+                        }
+                        MqttLogger.log("Subscribe failed (v3) for $topic: ${error.message}", "ERROR")
+                        null
+                    }
             } ?: CompletableFuture.completedFuture(null)
         } catch (e: Exception) {
+            synchronized(activeSubscriptions) {
+                activeSubscriptions.remove(topic)
+            }
             MqttLogger.log("Subscribe error: ${e.message}", "ERROR")
             CompletableFuture.completedFuture(null)
         }
@@ -318,6 +369,9 @@ class MqttManager {
     fun unsubscribe(topic: String): CompletableFuture<Void> {
         synchronized(pendingSubscriptions) {
             pendingSubscriptions.remove(topic)
+        }
+        synchronized(activeSubscriptions) {
+            activeSubscriptions.remove(topic)
         }
 
         val client = if (currentVersion == 5) client5 else client3
@@ -340,7 +394,7 @@ class MqttManager {
     fun publish(topic: String, payload: ByteArray): CompletableFuture<*> {
         val client = if (currentVersion == 5) client5 else client3
         if (client == null || !client.state.isConnected) {
-            MqttLogger.log("Publish dropped: $topic (not connected)", "TRACE")
+            enqueuePublish(topic, payload)
             return CompletableFuture.completedFuture(null)
         }
         return try {
@@ -352,6 +406,42 @@ class MqttManager {
         } catch (e: Exception) {
             MqttLogger.log("Publish error: ${e.message}", "ERROR")
             CompletableFuture.completedFuture(null)
+        }
+    }
+
+    fun isConnected(): Boolean {
+        val client = if (currentVersion == 5) client5 else client3
+        return client?.state?.isConnected == true
+    }
+
+    private fun enqueuePublish(topic: String, payload: ByteArray) {
+        synchronized(pendingPublishes) {
+            val result = pendingPublishes.enqueue(topic, payload)
+            if (result.droppedOldest) {
+                MqttLogger.log("Publish queue full; oldest message discarded", "WARNING")
+            }
+        }
+        MqttLogger.log("Publish queued: $topic", "QUEUED")
+    }
+
+    private fun flushQueuedPublishes() {
+        scope.launch {
+            while (isConnected()) {
+                val next = synchronized(pendingPublishes) {
+                    pendingPublishes.poll()
+                } ?: break
+
+                try {
+                    publish(next.topic, next.payload).await()
+                    MqttLogger.log("Queued publish delivered: ${next.topic}", "SENT")
+                } catch (e: Exception) {
+                    synchronized(pendingPublishes) {
+                        pendingPublishes.requeueFirst(next)
+                    }
+                    MqttLogger.log("Queued publish failed: ${e.message}", "ERROR")
+                    break
+                }
+            }
         }
     }
 
@@ -369,6 +459,12 @@ class MqttManager {
             synchronized(pendingSubscriptions) {
                 pendingSubscriptions.clear()
             }
+            synchronized(activeSubscriptions) {
+                activeSubscriptions.clear()
+            }
+            synchronized(pendingPublishes) {
+                pendingPublishes.clear()
+            }
             currentConfig = null
         }
         
@@ -377,6 +473,9 @@ class MqttManager {
         
         client5 = null
         client3 = null
+        synchronized(activeSubscriptions) {
+            activeSubscriptions.clear()
+        }
 
         return CompletableFuture.allOf(f5, f3).thenAccept { }
     }
@@ -400,5 +499,9 @@ class MqttManager {
                 cancel(true)
             }
         }
+    }
+
+    companion object {
+        private const val MAX_PENDING_PUBLISHES = 250
     }
 }

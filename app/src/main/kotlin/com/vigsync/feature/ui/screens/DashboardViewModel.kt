@@ -13,7 +13,6 @@ import com.vigsync.data.local.DeviceStatusEntity
 import com.vigsync.data.local.VigSyncDatabase
 import com.vigsync.data.prefs.AppPreferences
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -96,20 +95,22 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
 
     init {
         validateSharingStates()
-        
+
+        MqttService.runtimeState
+            .onEach { state ->
+                _isServiceRunning.value = state.isRunning
+                _isSyncActive.value = state.isSyncing
+            }
+            .launchIn(viewModelScope)
+
         viewModelScope.launch {
-            if (appPreferences.brokerUrl.first().isNotEmpty()) {
+            val shouldRunService = appPreferences.serviceEnabled.first()
+            val shouldSync = appPreferences.syncEnabled.first()
+            if ((shouldRunService || shouldSync) && appPreferences.brokerUrl.first().isNotEmpty()) {
                 val intent = android.content.Intent(getApplication(), MqttService::class.java).apply {
-                    action = MqttService.ACTION_START
+                    action = if (shouldSync) MqttService.ACTION_START_SYNC else MqttService.ACTION_START
                 }
                 getApplication<Application>().startForegroundService(intent)
-                
-                if (appPreferences.syncEnabled.first()) {
-                    val syncIntent = android.content.Intent(getApplication(), MqttService::class.java).apply {
-                        action = MqttService.ACTION_START_SYNC
-                    }
-                    getApplication<Application>().startForegroundService(syncIntent)
-                }
             }
         }
     }
@@ -141,37 +142,28 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 appPreferences.saveSyncEnabled(false)
             } else if (permissionsGranted) {
                 validateSharingStates() // One last check
-                
-                val startIntent = android.content.Intent(getApplication(), MqttService::class.java).apply {
-                    action = MqttService.ACTION_START
-                }
-                getApplication<Application>().startForegroundService(startIntent)
-                
+
                 intent.action = MqttService.ACTION_START_SYNC
                 getApplication<Application>().startForegroundService(intent)
+                appPreferences.saveServiceEnabled(true)
                 appPreferences.saveSyncEnabled(true)
             }
-            
-            delay(800)
-            _isSyncActive.value = MqttService.isSyncActive()
-            _isServiceRunning.value = MqttService.isServiceRunning()
         }
     }
 
     fun toggleService(permissionsGranted: Boolean = true) {
         val intent = android.content.Intent(getApplication(), MqttService::class.java)
-        if (isServiceRunning.value) {
-            intent.action = MqttService.ACTION_STOP
-            getApplication<Application>().stopService(intent)
-        } else if (permissionsGranted) {
-            intent.action = MqttService.ACTION_START
-            getApplication<Application>().startForegroundService(intent)
-        }
-        
         viewModelScope.launch {
-            delay(500)
-            _isServiceRunning.value = MqttService.isServiceRunning()
-            _isSyncActive.value = MqttService.isSyncActive()
+            if (isServiceRunning.value) {
+                intent.action = MqttService.ACTION_STOP
+                getApplication<Application>().startForegroundService(intent)
+                appPreferences.saveServiceEnabled(false)
+                appPreferences.saveSyncEnabled(false)
+            } else if (permissionsGranted) {
+                intent.action = MqttService.ACTION_START
+                getApplication<Application>().startForegroundService(intent)
+                appPreferences.saveServiceEnabled(true)
+            }
         }
     }
 }

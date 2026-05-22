@@ -24,6 +24,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.vigsync.core.BatteryOptimizationPolicy
+import com.vigsync.core.BatteryOptimizationRequest
 
 enum class SettingsSection { MQTT, PERMISSIONS, PUSH_NOTIFICATIONS, DETECTED_APPS, DEBUG }
 
@@ -298,6 +300,35 @@ fun PermissionsSettingsTab() {
         isBatteryUnrestricted = powerManager.isIgnoringBatteryOptimizations(context.packageName)
     }
 
+    fun openBatteryOptimizationFlow() {
+        val requestIntent = android.content.Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+            data = Uri.parse("package:${context.packageName}")
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val request = BatteryOptimizationPolicy.request(
+            sdkInt = android.os.Build.VERSION.SDK_INT,
+            isIgnoringOptimizations = isBatteryUnrestricted,
+            canRequestExemption = requestIntent.resolveActivity(context.packageManager) != null
+        )
+
+        val fallbackIntent = android.content.Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.fromParts("package", context.packageName, null)
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+
+        val intent = when (request) {
+            BatteryOptimizationRequest.NONE -> return
+            BatteryOptimizationRequest.REQUEST_EXEMPTION -> requestIntent
+            BatteryOptimizationRequest.OPEN_APP_SETTINGS -> fallbackIntent
+        }
+
+        try {
+            context.startActivity(intent)
+        } catch (_: Exception) {
+            context.startActivity(fallbackIntent)
+        }
+    }
+
     // Lifecycle observer to refresh when returning to the app
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -367,23 +398,23 @@ fun PermissionsSettingsTab() {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text("Battery Optimization", style = MaterialTheme.typography.titleMedium)
                 Text(
+                    if (isBatteryUnrestricted) "Status: unrestricted" else "Status: restricted",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (isBatteryUnrestricted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+                Text(
                     "The app needs 'Unrestricted' battery access to maintain the MQTT connection and capture events while the screen is off.",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(top = 4.dp)
                 )
                 if (!isBatteryUnrestricted) {
                     Button(
-                        onClick = {
-                            val intent = android.content.Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                                data = Uri.fromParts("package", context.packageName, null)
-                                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                            }
-                            context.startActivity(intent)
-                        },
+                        onClick = { openBatteryOptimizationFlow() },
                         modifier = Modifier.padding(top = 8.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = androidx.compose.ui.graphics.Color(0xFF4CAF50))
                     ) {
-                        Text("Open App Info to set Unrestricted")
+                        Text("Request Unrestricted Battery Access")
                     }
                 } else {
                     Row(modifier = Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {

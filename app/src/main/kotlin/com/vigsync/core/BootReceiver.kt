@@ -13,18 +13,31 @@ import kotlinx.coroutines.launch
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
+            val pendingResult = goAsync()
             val prefs = AppPreferences(context)
             CoroutineScope(Dispatchers.IO).launch {
-                // Only start if it was previously active (heuristically)
-                // For now, if we have a broker URL and shared key, we likely want to be active
-                val url = prefs.brokerUrl.first()
-                val key = prefs.sharedKey.first()
-                
-                if (url.isNotEmpty() && key != null) {
-                    val serviceIntent = Intent(context, MqttService::class.java).apply {
-                        action = MqttService.ACTION_START
+                try {
+                    val action = BootRecoveryPolicy.action(
+                        serviceEnabled = prefs.serviceEnabled.first(),
+                        syncEnabled = prefs.syncEnabled.first(),
+                        brokerUrl = prefs.brokerUrl.first(),
+                        sharedKey = prefs.sharedKey.first()
+                    )
+
+                    val serviceAction = when (action) {
+                        BootRecoveryAction.NONE -> null
+                        BootRecoveryAction.START_SERVICE -> MqttService.ACTION_START
+                        BootRecoveryAction.START_SYNC -> MqttService.ACTION_START_SYNC
                     }
-                    context.startForegroundService(serviceIntent)
+
+                    if (serviceAction != null) {
+                        val serviceIntent = Intent(context, MqttService::class.java).apply {
+                            this.action = serviceAction
+                        }
+                        context.startForegroundService(serviceIntent)
+                    }
+                } finally {
+                    pendingResult.finish()
                 }
             }
         }

@@ -28,6 +28,7 @@ class AppPreferences(private val context: Context) {
         val NOTIF_OTHER = booleanPreferencesKey("notif_other")
 
         val SYNC_ENABLED = booleanPreferencesKey("sync_enabled")
+        val SERVICE_ENABLED = booleanPreferencesKey("service_enabled")
 
         // Sharing Toggles (Safeguarded)
         val SHARE_CALLS = booleanPreferencesKey("share_calls")
@@ -171,9 +172,14 @@ class AppPreferences(private val context: Context) {
     }
 
     val syncEnabled: Flow<Boolean> = context.dataStore.data.map { it[SYNC_ENABLED] ?: false }
+    val serviceEnabled: Flow<Boolean> = context.dataStore.data.map { it[SERVICE_ENABLED] ?: false }
 
     suspend fun saveSyncEnabled(enabled: Boolean) {
         context.dataStore.edit { it[SYNC_ENABLED] = enabled }
+    }
+
+    suspend fun saveServiceEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[SERVICE_ENABLED] = enabled }
     }
 
     val shareCalls: Flow<Boolean> = context.dataStore.data.map { it[SHARE_CALLS] ?: false }

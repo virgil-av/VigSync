@@ -29,17 +29,17 @@ class MqttService : Service() {
         const val ACTION_STOP = "com.vigsync.app.STOP_SERVICE"
         const val ACTION_START_SYNC = "com.vigsync.app.START_OBSERVERS"
         const val ACTION_STOP_SYNC = "com.vigsync.app.STOP_OBSERVERS"
-        
-        private var isRunning = false
-        fun isServiceRunning() = isRunning
 
-        private var isSyncing = false
-        fun isSyncActive() = isSyncing
+        val runtimeState = MqttServiceRuntime.state
+        fun isServiceRunning() = runtimeState.value.isRunning
+        fun isSyncActive() = runtimeState.value.isSyncing
     }
 
     private val CHANNEL_ID = "VigSyncMqttChannel"
     private val NOTIFICATION_ID = 1
+    private val NETWORK_RECOVERY_DEBOUNCE_MS = 2_000L
     private var callLogObserver: CallLogObserver? = null
+    private var lastNetworkRecoveryAtMs = 0L
 
     // Dual-SIM management: CRITICAL - Keep strong references to prevent GC
     private val subscriptionListeners = ConcurrentHashMap<Int, Any>()
@@ -48,7 +48,7 @@ class MqttService : Service() {
     private val subChangedListener = object : SubscriptionManager.OnSubscriptionsChangedListener() {
         override fun onSubscriptionsChanged() {
             Log.d("MqttService", "Subscriptions changed, refreshing listeners")
-            if (isSyncing) {
+            if (runtimeState.value.isSyncing) {
                 registerSubscriptionListeners()
             }
         }
@@ -56,13 +56,12 @@ class MqttService : Service() {
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
-            SyncManager.getInstance(applicationContext).handleNetworkChange()
+            val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            handleNetworkCapabilities(connectivityManager.getNetworkCapabilities(network))
         }
 
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
-            if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
-                SyncManager.getInstance(applicationContext).handleNetworkChange()
-            }
+            handleNetworkCapabilities(capabilities)
         }
     }
 
@@ -83,32 +82,43 @@ class MqttService : Service() {
         } else {
             startForeground(NOTIFICATION_ID, createNotification())
         }
+
+        updateRuntime(lastAction = "created")
     }
 
     override fun onDestroy() {
         val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        connectivityManager.unregisterNetworkCallback(networkCallback)
+        try {
+            connectivityManager.unregisterNetworkCallback(networkCallback)
+        } catch (e: Exception) {
+            Log.w("MqttService", "Network callback was not registered", e)
+        }
         subscriptionManager.removeOnSubscriptionsChangedListener(subChangedListener)
 
-        SyncManager.getInstance(applicationContext).cancelHeartbeat()
+        SyncManager.getInstance(applicationContext).stop()
         stopObservers()
-        isRunning = false
+        MqttServiceRuntime.reset()
         super.onDestroy()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         SyncManager.getInstance(applicationContext).start()
-        isRunning = true
+        updateRuntime(isRunning = true, lastAction = intent?.action ?: "restart")
         
         when (intent?.action) {
             ACTION_START -> updateForeground()
-            ACTION_STOP -> stopSelf()
+            ACTION_STOP -> {
+                stopObservers()
+                SyncManager.getInstance(applicationContext).stop()
+                updateRuntime(isRunning = false, isSyncing = false, observersActive = false, lastAction = ACTION_STOP)
+                stopSelf()
+            }
             ACTION_START_SYNC -> startObservers()
             ACTION_STOP_SYNC -> stopObservers()
             null -> {
                 updateForeground()
-                if (isSyncing) {
-                    isSyncing = false
+                if (runtimeState.value.isSyncing) {
+                    updateRuntime(isSyncing = false, observersActive = false, lastAction = "restart")
                     startObservers()
                 }
             }
@@ -125,17 +135,19 @@ class MqttService : Service() {
     }
 
     private fun startObservers() {
-        if (isSyncing) return
+        if (runtimeState.value.isSyncing) return
+        updateRuntime(isSyncing = true, observersActive = true, lastAction = ACTION_START_SYNC)
         updateForeground()
         
         val canReadCallLog = androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.READ_CALL_LOG) == android.content.pm.PackageManager.PERMISSION_GRANTED
         if (canReadCallLog) {
             callLogObserver = CallLogObserver(this).also { it.register() }
+        } else {
+            Log.w("MqttService", "Call log observer inactive: READ_CALL_LOG denied")
         }
 
         registerSubscriptionListeners()
-        
-        isSyncing = true
+        updateForeground()
     }
 
     private fun registerSubscriptionListeners() {
@@ -216,8 +228,8 @@ class MqttService : Service() {
             }
         }
         subscriptionListeners.clear()
-        
-        isSyncing = false
+
+        updateRuntime(isSyncing = false, observersActive = false, lastAction = ACTION_STOP_SYNC)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -230,10 +242,54 @@ class MqttService : Service() {
     }
 
     private fun createNotification(): Notification {
+        val state = runtimeState.value
+        val text = when {
+            state.isSyncing && state.networkAvailable -> "Sync engine, observers, and network active"
+            state.isSyncing -> "Sync engine and event observers active"
+            state.isRunning && state.networkAvailable -> "MQTT sync engine active"
+            state.isRunning -> "MQTT sync engine waiting for network"
+            else -> "Starting sync engine..."
+        }
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("VigSync Active")
-            .setContentText("Synchronizing events via MQTT...")
+            .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .build()
+    }
+
+    private fun handleNetworkCapabilities(capabilities: NetworkCapabilities?) {
+        val hasInternet = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+        val now = System.currentTimeMillis()
+        updateRuntime(networkAvailable = hasInternet, lastAction = if (hasInternet) "network_available" else "network_unavailable")
+
+        if (NetworkRecoveryPolicy.shouldReconnect(
+                hasUsableInternet = hasInternet,
+                nowMs = now,
+                lastReconnectAtMs = lastNetworkRecoveryAtMs,
+                debounceMs = NETWORK_RECOVERY_DEBOUNCE_MS
+            )
+        ) {
+            lastNetworkRecoveryAtMs = now
+            SyncManager.getInstance(applicationContext).handleNetworkChange()
+        }
+        updateForeground()
+    }
+
+    private fun updateRuntime(
+        isRunning: Boolean? = null,
+        isSyncing: Boolean? = null,
+        observersActive: Boolean? = null,
+        networkAvailable: Boolean? = null,
+        lastAction: String? = null
+    ) {
+        MqttServiceRuntime.reduce { state ->
+            state.copy(
+                isRunning = isRunning ?: state.isRunning,
+                isSyncing = isSyncing ?: state.isSyncing,
+                observersActive = observersActive ?: state.observersActive,
+                networkAvailable = networkAvailable ?: state.networkAvailable,
+                lastAction = lastAction ?: state.lastAction
+            )
+        }
     }
 }
