@@ -4,7 +4,7 @@ This backlog is branch-local. Keep source branches untouched; all implementation
 
 ## Now
 
-- Add a practical smoke-test checklist for phone connected over ADB, USB reconnect, MQTT disconnect/reconnect, and desktop client display.
+- Add a practical smoke-test checklist for phone connected over ADB, export-log reset while the consumer is running, USB reconnect, MQTT disconnect/reconnect, and desktop client display.
 
 ## Next
 
@@ -26,3 +26,4 @@ This backlog is branch-local. Keep source branches untouched; all implementation
 - Restored local Android verification using `/home/vlahus/Android/Sdk`; `compileDebugKotlin` and `lintDebug` now pass on this branch.
 - Added Python unit tests for spool flush, replay dedupe, malformed payload handling, disconnected publish spooling, and config fallback.
 - Improved Pi consumer durability with acknowledged MQTT delivery tracking and persistent replay dedupe state.
+- Fixed event export reset recovery so resetting the Android log file no longer strands the Pi ADB tail consumer.

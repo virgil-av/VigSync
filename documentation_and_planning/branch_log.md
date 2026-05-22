@@ -141,3 +141,43 @@ Improve Pi consumer durability with persistent read offsets or explicit acknowle
 ### Recommended Next Task
 
 Add a practical smoke-test checklist for phone connected over ADB, USB reconnect, MQTT disconnect/reconnect, and desktop client display.
+
+## 2026-05-23 02:41 EEST - Fix event log reset tail recovery
+
+- Commit: `a179059a4e6373943b5c5bd15f5177521c2fe398`
+- Objective: stop the Raspberry Pi MQTT consumer from hanging after the Android export log is reset.
+- Why: Android reset previously deleted and recreated `vigsync_events.jsonl`, while the Pi bridge followed the old file handle through `adb shell tail -f`. New events written to the recreated file were invisible until the consumer process was restarted.
+
+### Work Completed
+
+- Changed Android `EventExporter.resetFile()` to truncate the export file in place and sync the empty file instead of deleting and recreating it.
+- Added remote export file snapshots in `vigsync_consumer.py` using ADB shell metadata with a size fallback.
+- Made the ADB tail loop wake periodically, detect truncation/recreation/missing file state, and stop the active tail so the existing outer loop restarts it cleanly.
+- Quoted the tailed Android file path for shell safety.
+- Extracted stream line processing into a focused helper so malformed stream lines remain non-poisoning.
+- Added Python unit coverage for remote snapshot parsing, truncation detection, recreate detection, healthy file growth, malformed stream line handling, and valid line processing after a reset-triggered restart.
+
+### Files Changed
+
+- `app/src/main/kotlin/com/vigsync/core/EventExporter.kt`
+- `rpi_script/vigsync_consumer.py`
+- `rpi_script/tests/test_vigsync_consumer.py`
+- `documentation_and_planning/backlog.md`
+- `documentation_and_planning/branch_log.md`
+
+### Verification
+
+- Passed: `python3 -m unittest discover -s rpi_script/tests`
+- Passed: `python3 -m py_compile rpi_script/vigsync_consumer.py rpi_script/vigsync_manager.py rpi_script/vigsync_gui_client.py`
+- Passed: `./gradlew :app:testDebugUnitTest`
+- Passed: `./gradlew :app:compileDebugKotlin`
+- Passed: `./gradlew :app:lintDebug`
+- Remaining warnings are non-blocking and unchanged in character: deprecated Gradle/Android options, Room schema export warning, deprecated telephony APIs, and deprecated Compose auto-mirrored icons.
+
+### Known Blockers
+
+- Online push is still blocked by GitHub permissions for the current SSH identity: `Permission to virgil-av/VigSync.git denied to 24vlh`.
+
+### Recommended Next Task
+
+Add a practical smoke-test checklist for phone connected over ADB, export-log reset while consumer is running, USB reconnect, MQTT disconnect/reconnect, and desktop client display.
