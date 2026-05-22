@@ -4,15 +4,14 @@ This backlog is branch-local. Keep source branches untouched; all implementation
 
 ## Now
 
-- Continue hardening background survival: battery optimization UX, boot recovery, network recovery, and service state reporting.
+- Add a practical smoke-test checklist for connect, disconnect, reconnect, publish-while-offline, heartbeat/status, event receive, and notification display.
 
 ## Next
 
-- Add a practical smoke-test checklist for connect, disconnect, reconnect, publish-while-offline, heartbeat/status, event receive, and notification display.
+- Improve diagnostics so the UI can show connection state, queued publish count, last publish result, last received message, and last processing error.
 
 ## Later
 
-- Improve diagnostics so the UI can show connection state, queued publish count, last publish result, last received message, and last processing error.
 - Review DataStore/Room persistence boundaries for durable local outbox behavior beyond the current in-memory MQTT queue.
 - Review whether the MQTT v3/v5 detection cache should expire or be invalidated when broker settings change.
 
@@ -26,3 +25,4 @@ This backlog is branch-local. Keep source branches untouched; all implementation
 - Added branch-local task log and backlog documentation.
 - Restored local Android verification using `/home/vlahus/Android/Sdk`; `compileDebugKotlin` and `lintDebug` now pass on this branch.
 - Added JVM unit tests and pure-Kotlin helpers for MQTT publish queueing, event buffering/debounce, and stale/offline device behavior.
+- Hardened background survival with explicit service restore intent, boot recovery policy, network recovery debounce, service runtime state reporting, and battery optimization request UX.

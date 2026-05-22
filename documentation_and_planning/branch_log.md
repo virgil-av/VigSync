@@ -104,3 +104,54 @@ Add focused tests or testable helpers for MQTT publish queueing, event buffering
 ### Recommended Next Task
 
 Continue hardening background survival: battery optimization UX, boot recovery, network recovery, and service state reporting.
+
+## 2026-05-22 23:42 EEST - Harden background survival and service state
+
+- Commit: `c56e739845f977cb8b1c699382f661943a23dec4`
+- Objective: make Android service recovery, background survival, network recovery, and foreground-service state deterministic.
+- Why: the service was previously restored heuristically from MQTT config, the dashboard polled static booleans after delays, and network callbacks could trigger duplicate reconnect work.
+
+### Work Completed
+
+- Added explicit persisted `serviceEnabled` intent alongside existing `syncEnabled`.
+- Updated dashboard service/sync toggles so user intent is saved before boot or process recovery needs it.
+- Reworked boot recovery to use a pure `BootRecoveryPolicy` and restore service-only or sync mode only when desired state and MQTT config allow it.
+- Added `ServiceRuntimeState` and `MqttServiceRuntime` so foreground service state is reported as a `StateFlow`.
+- Updated `MqttService` lifecycle, sync actions, observer state, network callbacks, and notification text from the runtime state.
+- Added `NetworkRecoveryPolicy` to debounce duplicate reconnect callbacks and ignore networks without internet capability.
+- Added `BatteryOptimizationPolicy`, manifest support for battery optimization exemption requests, and settings UX that prefers the Android exemption request with app-settings fallback.
+- Added focused JVM tests for boot restore decisions, network recovery debounce, service state reduction, and battery optimization request selection.
+
+### Files Changed
+
+- `app/src/main/AndroidManifest.xml`
+- `app/src/main/kotlin/com/vigsync/core/BootReceiver.kt`
+- `app/src/main/kotlin/com/vigsync/core/BootRecoveryPolicy.kt`
+- `app/src/main/kotlin/com/vigsync/core/BatteryOptimizationPolicy.kt`
+- `app/src/main/kotlin/com/vigsync/core/mqtt/MqttService.kt`
+- `app/src/main/kotlin/com/vigsync/core/mqtt/NetworkRecoveryPolicy.kt`
+- `app/src/main/kotlin/com/vigsync/core/mqtt/ServiceRuntimeState.kt`
+- `app/src/main/kotlin/com/vigsync/data/prefs/AppPreferences.kt`
+- `app/src/main/kotlin/com/vigsync/feature/ui/screens/DashboardViewModel.kt`
+- `app/src/main/kotlin/com/vigsync/feature/ui/screens/SettingsScreen.kt`
+- `app/src/test/kotlin/com/vigsync/core/BootRecoveryPolicyTest.kt`
+- `app/src/test/kotlin/com/vigsync/core/BatteryOptimizationPolicyTest.kt`
+- `app/src/test/kotlin/com/vigsync/core/mqtt/NetworkRecoveryPolicyTest.kt`
+- `app/src/test/kotlin/com/vigsync/core/mqtt/ServiceRuntimeStateTest.kt`
+- `documentation_and_planning/backlog.md`
+- `documentation_and_planning/branch_log.md`
+
+### Verification
+
+- Passed: `./gradlew :app:testDebugUnitTest`
+- Passed: `./gradlew :app:compileDebugKotlin`
+- Passed: `./gradlew :app:lintDebug`
+- Remaining warnings are non-blocking and unchanged in character: deprecated Gradle/Android options, Room schema export warning, deprecated telephony APIs, Kotlin cleanup warnings in `MqttManager`, and deprecated Compose auto-mirrored icons.
+
+### Known Blockers
+
+- Online push is still blocked by GitHub permissions for the current SSH identity: `Permission to virgil-av/VigSync.git denied to 24vlh`.
+
+### Recommended Next Task
+
+Add a practical smoke-test checklist for connect, disconnect, reconnect, publish-while-offline, heartbeat/status, event receive, and notification display.
