@@ -56,11 +56,15 @@ class VigSyncConsumerTest(unittest.TestCase):
         self.root = Path(self.temp_dir.name)
 
         vc.SPOOL_FILE = str(self.root / "spool.jsonl")
+        vc.STATE_FILE = str(self.root / "consumer_state.json")
         vc.CONFIG_FILE = str(self.root / "vigsync_server_config.json")
         vc.LOG_FILE = str(self.root / "consumer.log")
         vc.memory_logs.clear()
         vc.seen_fingerprints.clear()
         vc.seen_fingerprint_set.clear()
+        vc._loaded_state_file = None
+        vc.pending_publish_by_mid.clear()
+        vc.pending_spool_ids.clear()
 
     def read_spool(self):
         with open(vc.SPOOL_FILE, "r", encoding="utf-8") as handle:
@@ -71,17 +75,54 @@ class VigSyncConsumerTest(unittest.TestCase):
 
         self.assertEqual(
             [{"topic": "vigsync/events/device", "payload": '{"type":"SMS"}'}],
-            self.read_spool(),
+            [{"topic": item["topic"], "payload": item["payload"]} for item in self.read_spool()],
         )
 
-    def test_flush_spool_publishes_records_and_removes_file_after_success(self):
+    def test_flush_spool_waits_for_mqtt_ack_before_removing_file(self):
         vc.append_spool("vigsync/events/device", '{"type":"SMS"}')
         client = FakeMqttClient(connected=True, publish_rc=vc.mqtt.MQTT_ERR_SUCCESS)
 
         vc.flush_spool(client)
 
         self.assertEqual([("vigsync/events/device", '{"type":"SMS"}', 1)], client.published)
+        self.assertTrue(Path(vc.SPOOL_FILE).exists())
+
+        vc.on_publish(client, None, 1)
+
         self.assertFalse(Path(vc.SPOOL_FILE).exists())
+
+    def test_on_publish_removes_only_matching_spool_record(self):
+        vc.append_spool("vigsync/events/device", '{"type":"SMS"}')
+        vc.append_spool("vigsync/status/device", '{"type":"STATUS"}')
+        client = FakeMqttClient(connected=True, publish_rc=vc.mqtt.MQTT_ERR_SUCCESS)
+
+        vc.flush_spool(client)
+        vc.on_publish(client, None, 1)
+
+        self.assertEqual(
+            [{"topic": "vigsync/status/device", "payload": '{"type":"STATUS"}'}],
+            [{"topic": item["topic"], "payload": item["payload"]} for item in self.read_spool()],
+        )
+
+    def test_flush_spool_preserves_unacknowledged_records(self):
+        vc.append_spool("vigsync/events/device", '{"type":"SMS"}')
+        client = FakeMqttClient(connected=True, publish_rc=vc.mqtt.MQTT_ERR_SUCCESS)
+
+        vc.flush_spool(client)
+
+        self.assertEqual(
+            [{"topic": "vigsync/events/device", "payload": '{"type":"SMS"}'}],
+            [{"topic": item["topic"], "payload": item["payload"]} for item in self.read_spool()],
+        )
+
+    def test_flush_spool_does_not_republish_pending_records_before_ack(self):
+        vc.append_spool("vigsync/events/device", '{"type":"SMS"}')
+        client = FakeMqttClient(connected=True, publish_rc=vc.mqtt.MQTT_ERR_SUCCESS)
+
+        vc.flush_spool(client)
+        vc.flush_spool(client)
+
+        self.assertEqual([("vigsync/events/device", '{"type":"SMS"}', 1)], client.published)
 
     def test_flush_spool_preserves_failed_publish_records(self):
         vc.append_spool("vigsync/events/device", '{"type":"SMS"}')
@@ -89,12 +130,23 @@ class VigSyncConsumerTest(unittest.TestCase):
 
         vc.flush_spool(client)
 
-        self.assertEqual([{"topic": "vigsync/events/device", "payload": '{"type":"SMS"}'}], self.read_spool())
+        self.assertEqual(
+            [{"topic": "vigsync/events/device", "payload": '{"type":"SMS"}'}],
+            [{"topic": item["topic"], "payload": item["payload"]} for item in self.read_spool()],
+        )
 
     def test_remember_fingerprint_rejects_duplicate_replay(self):
         self.assertTrue(vc.remember_fingerprint("topic", '{"type":"SMS"}'))
         self.assertFalse(vc.remember_fingerprint("topic", '{"type":"SMS"}'))
         self.assertTrue(vc.remember_fingerprint("topic", '{"type":"CALL"}'))
+
+    def test_remember_fingerprint_persists_replay_cache(self):
+        self.assertTrue(vc.remember_fingerprint("topic", '{"type":"SMS"}'))
+        vc.seen_fingerprints.clear()
+        vc.seen_fingerprint_set.clear()
+        vc._loaded_state_file = None
+
+        self.assertTrue(vc.has_fingerprint("topic", '{"type":"SMS"}'))
 
     def test_publish_or_spool_skips_malformed_json_payloads(self):
         client = FakeMqttClient(connected=False)
@@ -102,6 +154,7 @@ class VigSyncConsumerTest(unittest.TestCase):
         vc.publish_or_spool(client, "vigsync/events/device", "not-json")
 
         self.assertFalse(Path(vc.SPOOL_FILE).exists())
+        self.assertFalse(Path(vc.STATE_FILE).exists())
         self.assertEqual([], client.published)
 
     def test_publish_or_spool_spools_valid_payload_when_disconnected(self):
@@ -109,8 +162,36 @@ class VigSyncConsumerTest(unittest.TestCase):
 
         vc.publish_or_spool(client, "vigsync/events/device", '{"type":"SMS"}')
 
-        self.assertEqual([{"topic": "vigsync/events/device", "payload": '{"type":"SMS"}'}], self.read_spool())
+        self.assertEqual(
+            [{"topic": "vigsync/events/device", "payload": '{"type":"SMS"}'}],
+            [{"topic": item["topic"], "payload": item["payload"]} for item in self.read_spool()],
+        )
+        self.assertTrue(vc.has_fingerprint("vigsync/events/device", '{"type":"SMS"}'))
         self.assertEqual([], client.published)
+
+    def test_publish_or_spool_dedupes_replay_after_restart(self):
+        client = FakeMqttClient(connected=False)
+
+        vc.publish_or_spool(client, "vigsync/events/device", '{"type":"SMS"}')
+        vc.seen_fingerprints.clear()
+        vc.seen_fingerprint_set.clear()
+        vc._loaded_state_file = None
+        vc.publish_or_spool(client, "vigsync/events/device", '{"type":"SMS"}')
+
+        self.assertEqual(1, len(self.read_spool()))
+        self.assertEqual([], client.published)
+
+    def test_publish_or_spool_keeps_connected_publish_spooled_until_ack(self):
+        client = FakeMqttClient(connected=True)
+
+        vc.publish_or_spool(client, "vigsync/events/device", '{"type":"SMS"}')
+
+        self.assertEqual([("vigsync/events/device", '{"type":"SMS"}', 1)], client.published)
+        self.assertEqual(1, len(self.read_spool()))
+
+        vc.on_publish(client, None, 1)
+
+        self.assertFalse(Path(vc.SPOOL_FILE).exists())
 
     def test_load_config_falls_back_to_existing_local_config_when_adb_pull_fails(self):
         expected = {"device_id": "phone-1", "broker_url": "localhost"}

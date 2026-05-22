@@ -4,16 +4,15 @@ This backlog is branch-local. Keep source branches untouched; all implementation
 
 ## Now
 
-- Improve Pi consumer durability with persistent read offsets or explicit acknowledged delivery tracking.
+- Add a practical smoke-test checklist for phone connected over ADB, USB reconnect, MQTT disconnect/reconnect, and desktop client display.
 
 ## Next
 
-- Add a practical smoke-test checklist for phone connected over ADB, USB reconnect, MQTT disconnect/reconnect, and desktop client display.
+- Add structured operational logs or status output for the Pi bridge, including current config source, ADB state, MQTT state, spool size, pending acknowledgements, and last delivered event time.
 
 ## Later
 
 - Make the Raspberry Pi service installer more configurable for non-systemd or multiple-user environments.
-- Add structured operational logs or status output for the Pi bridge, including current config source, ADB state, MQTT state, spool size, and last delivered event time.
 - Review whether the desktop GUI should persist connection settings and recent event state between launches.
 
 ## Blocked
@@ -26,3 +25,4 @@ This backlog is branch-local. Keep source branches untouched; all implementation
 - Added branch-local task log and backlog documentation.
 - Restored local Android verification using `/home/vlahus/Android/Sdk`; `compileDebugKotlin` and `lintDebug` now pass on this branch.
 - Added Python unit tests for spool flush, replay dedupe, malformed payload handling, disconnected publish spooling, and config fallback.
+- Improved Pi consumer durability with acknowledged MQTT delivery tracking and persistent replay dedupe state.

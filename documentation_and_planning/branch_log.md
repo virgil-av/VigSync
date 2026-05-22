@@ -101,3 +101,43 @@ Add Python unit tests for `vigsync_consumer.py` spool flush, replay dedupe, malf
 ### Recommended Next Task
 
 Improve Pi consumer durability with persistent read offsets or explicit acknowledged delivery tracking.
+
+## 2026-05-22 23:29 EEST - Add durable Pi consumer delivery tracking
+
+- Commit: pending commit for this task.
+- Objective: make the Raspberry Pi consumer resilient to MQTT disconnects, process restarts, and ADB tail replay without losing or duplicating phone-exported events.
+- Why: the prior spool treated a successful Paho `publish()` call as delivered, even though QoS 1 delivery is only complete after MQTT acknowledgement. Replay dedupe was also memory-only, so ADB reconnects or process restarts could replay recently tailed lines.
+
+### Work Completed
+
+- Added `VIGSYNC_STATE_FILE` support for persistent bounded replay fingerprints.
+- Changed the JSONL spool to keep structured records with stable IDs, fingerprints, creation timestamps, and publish attempt counts.
+- Changed `publish_or_spool()` so valid payloads are durably spooled before they are marked as seen.
+- Changed `flush_spool()` so queued records remain on disk while awaiting MQTT QoS acknowledgement.
+- Added pending MQTT message ID tracking and removed spool records only from `on_publish()`.
+- Kept malformed JSON payloads non-poisoning: they are logged and skipped without updating spool or replay state.
+- Extended Python unit tests to cover acknowledgement removal, unacknowledged retry preservation, duplicate replay after restart, and durable connected/disconnected publish behavior.
+
+### Files Changed
+
+- `rpi_script/vigsync_consumer.py`
+- `rpi_script/tests/test_vigsync_consumer.py`
+- `documentation_and_planning/backlog.md`
+- `documentation_and_planning/branch_log.md`
+
+### Verification
+
+- Passed: `python3 -m unittest discover -s rpi_script/tests`
+- Passed: `python3 -m py_compile rpi_script/vigsync_consumer.py rpi_script/vigsync_manager.py rpi_script/vigsync_gui_client.py`
+- Passed: `./gradlew :app:testDebugUnitTest` (`NO-SOURCE` for Android unit tests on this branch)
+- Passed: `./gradlew :app:compileDebugKotlin`
+- Passed: `./gradlew :app:lintDebug`
+- Remaining warnings are non-blocking and unchanged in character: deprecated Gradle/Android options and dependency constraint sync warnings.
+
+### Known Blockers
+
+- Online push is still blocked by GitHub permissions for the current SSH identity: `Permission to virgil-av/VigSync.git denied to 24vlh`.
+
+### Recommended Next Task
+
+Add a practical smoke-test checklist for phone connected over ADB, USB reconnect, MQTT disconnect/reconnect, and desktop client display.

@@ -14,6 +14,7 @@ CONFIG_FILE = os.environ.get("VIGSYNC_CONFIG_FILE", "vigsync_server_config.json"
 LOG_FILE = os.environ.get("VIGSYNC_LOG_FILE", "vigsync_consumer.log")
 PID_FILE = os.environ.get("VIGSYNC_PID_FILE", "vigsync_consumer.pid")
 SPOOL_FILE = os.environ.get("VIGSYNC_SPOOL_FILE", "vigsync_spool.jsonl")
+STATE_FILE = os.environ.get("VIGSYNC_STATE_FILE", "vigsync_consumer_state.json")
 # The path inside the phone where the app saves the config
 ADB_PHONE_PATH = os.environ.get("VIGSYNC_ADB_PHONE_PATH", "/storage/emulated/0/Android/data/com.vigsync/files/Documents/")
 
@@ -30,6 +31,9 @@ FLUSH_INTERVAL = 6 * 3600 # 6 hours
 seen_fingerprints = []
 seen_fingerprint_set = set()
 MAX_SEEN_FINGERPRINTS = 2000
+_loaded_state_file = None
+pending_publish_by_mid = {}
+pending_spool_ids = set()
 
 def log_mem(message, level="INFO"):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -58,7 +62,44 @@ def flush_logs():
     except Exception as e:
         sys.stderr.write(f"Failed to flush logs: {e}\n")
 
+def make_fingerprint(topic, payload):
+    return hashlib.sha256(f"{topic}\0{payload}".encode("utf-8", errors="replace")).hexdigest()
+
+def ensure_state_loaded():
+    global _loaded_state_file
+    if _loaded_state_file == STATE_FILE:
+        return
+
+    seen_fingerprints.clear()
+    seen_fingerprint_set.clear()
+    _loaded_state_file = STATE_FILE
+
+    if not os.path.exists(STATE_FILE):
+        return
+
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        for fingerprint in data.get("seen_fingerprints", [])[-MAX_SEEN_FINGERPRINTS:]:
+            if isinstance(fingerprint, str) and fingerprint not in seen_fingerprint_set:
+                seen_fingerprint_set.add(fingerprint)
+                seen_fingerprints.append(fingerprint)
+    except Exception as e:
+        log_mem(f"Failed to load consumer state; starting with empty replay cache: {e}", "WARNING")
+
+def save_seen_fingerprints():
+    try:
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"seen_fingerprints": seen_fingerprints[-MAX_SEEN_FINGERPRINTS:]}, f)
+    except Exception as e:
+        log_mem(f"Failed to save consumer state: {e}", "ERROR")
+
+def has_fingerprint(topic, payload):
+    ensure_state_loaded()
+    return make_fingerprint(topic, payload) in seen_fingerprint_set
+
 def remember_fingerprint(topic, payload):
+    ensure_state_loaded()
     fingerprint = hashlib.sha256(f"{topic}\0{payload}".encode("utf-8", errors="replace")).hexdigest()
     if fingerprint in seen_fingerprint_set:
         return False
@@ -67,22 +108,14 @@ def remember_fingerprint(topic, payload):
     if len(seen_fingerprints) > MAX_SEEN_FINGERPRINTS:
         old = seen_fingerprints.pop(0)
         seen_fingerprint_set.discard(old)
+    save_seen_fingerprints()
     return True
 
-def append_spool(topic, payload):
-    try:
-        with open(SPOOL_FILE, "a", encoding="utf-8") as f:
-            f.write(json.dumps({"topic": topic, "payload": payload}, ensure_ascii=False) + "\n")
-        log_mem(f"Spooling message for later delivery: {topic}", "WARNING")
-    except Exception as e:
-        log_mem(f"Failed to spool message for {topic}: {e}", "ERROR")
+def read_spool_entries():
+    if not os.path.exists(SPOOL_FILE):
+        return []
 
-def flush_spool(client):
-    if not os.path.exists(SPOOL_FILE) or not client.is_connected():
-        return
-
-    remaining = []
-    delivered = 0
+    entries = []
     try:
         with open(SPOOL_FILE, "r", encoding="utf-8") as f:
             for line in f:
@@ -93,22 +126,93 @@ def flush_spool(client):
                     item = json.loads(line)
                     topic = item["topic"]
                     payload = item["payload"]
-                    info = client.publish(topic, payload, qos=1)
-                    if info.rc == mqtt.MQTT_ERR_SUCCESS:
-                        delivered += 1
-                    else:
-                        remaining.append(line)
+                    fingerprint = item.get("fingerprint") or make_fingerprint(topic, payload)
+                    entries.append({
+                        "id": item.get("id") or fingerprint,
+                        "fingerprint": fingerprint,
+                        "topic": topic,
+                        "payload": payload,
+                        "created_at": item.get("created_at") or datetime.now().isoformat(),
+                        "attempts": int(item.get("attempts", 0)),
+                    })
                 except Exception as e:
                     log_mem(f"Dropping invalid spool line: {e}", "ERROR")
+    except Exception as e:
+        log_mem(f"Failed to read spool: {e}", "ERROR")
+    return entries
 
-        if remaining:
-            with open(SPOOL_FILE, "w", encoding="utf-8") as f:
-                f.write("\n".join(remaining) + "\n")
-        else:
+def write_spool_entries(entries):
+    if not entries:
+        if os.path.exists(SPOOL_FILE):
             os.remove(SPOOL_FILE)
+        return
 
-        if delivered:
-            log_mem(f"Flushed {delivered} queued messages.")
+    with open(SPOOL_FILE, "w", encoding="utf-8") as f:
+        for entry in entries:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+def append_spool(topic, payload, fingerprint=None):
+    fingerprint = fingerprint or make_fingerprint(topic, payload)
+    entry_id = fingerprint
+    entries = read_spool_entries()
+    if any(entry["id"] == entry_id for entry in entries):
+        return entry_id
+
+    entry = {
+        "id": entry_id,
+        "fingerprint": fingerprint,
+        "topic": topic,
+        "payload": payload,
+        "created_at": datetime.now().isoformat(),
+        "attempts": 0,
+    }
+    try:
+        with open(SPOOL_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        log_mem(f"Spooling message for later delivery: {topic}", "WARNING")
+        return entry_id
+    except Exception as e:
+        log_mem(f"Failed to spool message for {topic}: {e}", "ERROR")
+        return None
+
+def mark_spool_pending(entry, mid):
+    pending_publish_by_mid[mid] = entry["id"]
+    pending_spool_ids.add(entry["id"])
+
+def mark_spool_acknowledged(spool_id):
+    entries = [entry for entry in read_spool_entries() if entry["id"] != spool_id]
+    write_spool_entries(entries)
+    pending_spool_ids.discard(spool_id)
+
+def flush_spool(client):
+    if not os.path.exists(SPOOL_FILE) or not client.is_connected():
+        return
+
+    entries = read_spool_entries()
+    if not entries:
+        write_spool_entries([])
+        return
+
+    queued = 0
+    changed = False
+    try:
+        for entry in entries:
+            if entry["id"] in pending_spool_ids:
+                continue
+            info = client.publish(entry["topic"], entry["payload"], qos=1)
+            entry["attempts"] = entry.get("attempts", 0) + 1
+            changed = True
+            if info.rc == mqtt.MQTT_ERR_SUCCESS:
+                mark_spool_pending(entry, info.mid)
+                queued += 1
+            else:
+                log_mem(f"MQTT refused queued publish for {entry['topic']} (rc={info.rc}).", "WARNING")
+
+        if changed:
+            write_spool_entries(entries)
+
+        if queued:
+            log_mem(f"Queued {queued} spooled messages for MQTT acknowledgement.")
     except Exception as e:
         log_mem(f"Failed to flush spool: {e}", "ERROR")
 
@@ -119,20 +223,25 @@ def publish_or_spool(client, topic, payload):
         log_mem(f"Skipping malformed payload for {topic}: {e}", "ERROR")
         return
 
-    if not remember_fingerprint(topic, payload):
+    if has_fingerprint(topic, payload):
         log_mem(f"Skipping duplicate replay for {topic}", "TRACE")
         return
 
+    fingerprint = make_fingerprint(topic, payload)
+    spool_id = append_spool(topic, payload, fingerprint)
+    if not spool_id:
+        return
+    remember_fingerprint(topic, payload)
+
     if not client.is_connected():
-        append_spool(topic, payload)
         return
 
     info = client.publish(topic, payload, qos=1)
     if info.rc == mqtt.MQTT_ERR_SUCCESS:
+        mark_spool_pending({"id": spool_id}, info.mid)
         log_mem(f"Queued for {topic} (msg_id: {info.mid})")
     else:
-        log_mem(f"MQTT refused publish for {topic} (rc={info.rc}); spooling.", "WARNING")
-        append_spool(topic, payload)
+        log_mem(f"MQTT refused publish for {topic} (rc={info.rc}); keeping spooled.", "WARNING")
 
 # --- MQTT CALLBACKS ---
 
@@ -159,6 +268,9 @@ def on_disconnect(client, userdata, rc):
         log_mem("MQTT Disconnected safely.")
 
 def on_publish(client, userdata, mid):
+    spool_id = pending_publish_by_mid.pop(mid, None)
+    if spool_id:
+        mark_spool_acknowledged(spool_id)
     log_mem(f"Delivery Confirmed (msg_id: {mid})", "TRACE")
 
 def on_log(client, userdata, level, buf):
