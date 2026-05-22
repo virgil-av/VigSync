@@ -22,6 +22,7 @@ class SyncManager private constructor(context: Context) {
 
     private val eventBuffer = ConcurrentHashMap<String, BufferedEvent>()
     private val BUFFER_WINDOW = 5000L // 5 seconds
+    private var periodicStatusJob: Job? = null
 
     data class BufferedEvent(
         val type: String,
@@ -58,7 +59,8 @@ class SyncManager private constructor(context: Context) {
     }
 
     private fun startPeriodicStatusUpdates() {
-        scope.launch {
+        periodicStatusJob?.cancel()
+        periodicStatusJob = scope.launch {
             while (isActive) {
                 exportCurrentStatus()
                 delay(60 * 1000) 
@@ -102,10 +104,9 @@ class SyncManager private constructor(context: Context) {
             return
         }
 
-        scheduleBufferPublication(eventId)
-        
         val buffered = BufferedEvent(type, data, System.currentTimeMillis(), 0)
         eventBuffer[eventId] = buffered
+        scheduleBufferPublication(eventId)
     }
 
     private fun scheduleBufferPublication(id: String) {
@@ -153,6 +154,9 @@ class SyncManager private constructor(context: Context) {
     }
 
     fun stop() {
+        periodicStatusJob?.cancel()
+        eventBuffer.values.forEach { it.job?.cancel() }
+        eventBuffer.clear()
         Log.d("SyncManager", "Local Stop triggered")
     }
 

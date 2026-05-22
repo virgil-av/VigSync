@@ -20,6 +20,7 @@ class EventExporter(private val context: Context) {
     private val jsonPretty = Json { prettyPrint = true }
     private val jsonLine = Json { prettyPrint = false; ignoreUnknownKeys = true }
     private val appPreferences = AppPreferences(context)
+    private val writeLock = Any()
     
     fun getExportFile(): File {
         val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) 
@@ -43,9 +44,11 @@ class EventExporter(private val context: Context) {
         val lineToSave = "$topicSuffix|$rawJson\n"
         
         try {
-            FileOutputStream(file, true).use { fos ->
-                fos.write(lineToSave.toByteArray())
-                fos.flush()
+            synchronized(writeLock) {
+                FileOutputStream(file, true).use { fos ->
+                    fos.write(lineToSave.toByteArray(Charsets.UTF_8))
+                    fos.fd.sync()
+                }
             }
             Log.d("EventExporter", "Exported to $topicSuffix: ${rawJson.take(50)}...")
         } catch (e: IOException) {
@@ -55,13 +58,15 @@ class EventExporter(private val context: Context) {
 
     fun resetFile() {
         val file = getExportFile()
-        if (file.exists()) {
-            file.delete()
-        }
-        try {
-            file.createNewFile()
-        } catch (e: IOException) {
-            Log.e("EventExporter", "Failed to reset export file", e)
+        synchronized(writeLock) {
+            if (file.exists()) {
+                file.delete()
+            }
+            try {
+                file.createNewFile()
+            } catch (e: IOException) {
+                Log.e("EventExporter", "Failed to reset export file", e)
+            }
         }
     }
 
