@@ -4,11 +4,10 @@ This backlog is branch-local. Keep source branches untouched; all implementation
 
 ## Now
 
-- Fix local Android SDK/build-tools verification so Gradle can compile from this workspace.
+- Add focused tests or testable helpers for MQTT publish queueing, event buffering, and device stale/offline behavior.
 
 ## Next
 
-- Add focused tests or testable helpers for MQTT publish queueing, event buffering, and device stale/offline behavior.
 - Continue hardening background survival: battery optimization UX, boot recovery, network recovery, and service state reporting.
 - Add a practical smoke-test checklist for connect, disconnect, reconnect, publish-while-offline, heartbeat/status, event receive, and notification display.
 
@@ -20,10 +19,10 @@ This backlog is branch-local. Keep source branches untouched; all implementation
 
 ## Blocked
 
-- Android compile/lint is blocked by the local SDK/build-tools setup: `local.properties` points to a Windows SDK path from Linux, and mounted build-tools `36.0.0` is missing `aapt`.
 - Online push is blocked by GitHub permissions for the current SSH identity: `Permission to virgil-av/VigSync.git denied to 24vlh`.
 
 ## Done
 
 - Stabilized the MQTT sync engine in commit `058b4d85b4c47704837a38559703c958f7e11e3f`.
 - Added branch-local task log and backlog documentation.
+- Restored local Android verification using `/home/vlahus/Android/Sdk`; `compileDebugKotlin` and `lintDebug` now pass on this branch.
