@@ -144,7 +144,7 @@ Add a practical smoke-test checklist for phone connected over ADB, USB reconnect
 
 ## 2026-05-23 02:41 EEST - Fix event log reset tail recovery
 
-- Commit: pending commit for this task.
+- Commit: `a179059a4e6373943b5c5bd15f5177521c2fe398`
 - Objective: stop the Raspberry Pi MQTT consumer from hanging after the Android export log is reset.
 - Why: Android reset previously deleted and recreated `vigsync_events.jsonl`, while the Pi bridge followed the old file handle through `adb shell tail -f`. New events written to the recreated file were invisible until the consumer process was restarted.
 
