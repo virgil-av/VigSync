@@ -87,10 +87,14 @@ class MqttService : Service() {
 
     override fun onDestroy() {
         val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        connectivityManager.unregisterNetworkCallback(networkCallback)
+        try {
+            connectivityManager.unregisterNetworkCallback(networkCallback)
+        } catch (e: Exception) {
+            Log.w("MqttService", "Network callback was not registered", e)
+        }
         subscriptionManager.removeOnSubscriptionsChangedListener(subChangedListener)
 
-        SyncManager.getInstance(applicationContext).cancelHeartbeat()
+        SyncManager.getInstance(applicationContext).stop()
         stopObservers()
         isRunning = false
         super.onDestroy()
@@ -102,7 +106,11 @@ class MqttService : Service() {
         
         when (intent?.action) {
             ACTION_START -> updateForeground()
-            ACTION_STOP -> stopSelf()
+            ACTION_STOP -> {
+                stopObservers()
+                SyncManager.getInstance(applicationContext).stop()
+                stopSelf()
+            }
             ACTION_START_SYNC -> startObservers()
             ACTION_STOP_SYNC -> stopObservers()
             null -> {
@@ -126,16 +134,18 @@ class MqttService : Service() {
 
     private fun startObservers() {
         if (isSyncing) return
+        isSyncing = true
         updateForeground()
         
         val canReadCallLog = androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.READ_CALL_LOG) == android.content.pm.PackageManager.PERMISSION_GRANTED
         if (canReadCallLog) {
             callLogObserver = CallLogObserver(this).also { it.register() }
+        } else {
+            Log.w("MqttService", "Call log observer inactive: READ_CALL_LOG denied")
         }
 
         registerSubscriptionListeners()
-        
-        isSyncing = true
+        updateForeground()
     }
 
     private fun registerSubscriptionListeners() {
@@ -230,9 +240,14 @@ class MqttService : Service() {
     }
 
     private fun createNotification(): Notification {
+        val text = when {
+            isSyncing -> "Sync engine and event observers active"
+            isRunning -> "MQTT sync engine active"
+            else -> "Starting sync engine..."
+        }
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("VigSync Active")
-            .setContentText("Synchronizing events via MQTT...")
+            .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .build()
     }

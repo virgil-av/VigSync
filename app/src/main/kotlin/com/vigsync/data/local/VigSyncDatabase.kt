@@ -53,6 +53,9 @@ interface VigSyncDao {
     @Query("UPDATE device_status SET customLabel = :label WHERE deviceId = :deviceId")
     suspend fun updateDeviceLabel(deviceId: String, label: String?)
 
+    @Query("UPDATE device_status SET isOnline = 0 WHERE lastSeen < :threshold")
+    suspend fun markDevicesOfflineBefore(threshold: Long)
+
     @Query("DELETE FROM device_status WHERE deviceId = :deviceId")
     suspend fun deleteDeviceStatus(deviceId: String)
 
@@ -101,7 +104,7 @@ class Converters {
     fun toDirection(value: String) = EventDirection.valueOf(value)
 }
 
-@Database(entities = [RawMessage::class, EventEntity::class, DeviceStatusEntity::class, HostProtocolEntity::class], version = 7)
+@Database(entities = [RawMessage::class, EventEntity::class, DeviceStatusEntity::class, HostProtocolEntity::class], version = 8)
 @TypeConverters(Converters::class)
 abstract class VigSyncDatabase : RoomDatabase() {
     abstract fun dao(): VigSyncDao

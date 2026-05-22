@@ -44,6 +44,7 @@ class SyncManager private constructor(context: Context) {
     val SYNC_CHANNEL_ID = "vigsync_notifications"
     val SYNC_NOTIF_ID = 1001
     private val HEARTBEAT_INTERVAL_MS = 15 * 60 * 1000L // 15 minutes
+    private val DEVICE_STALE_AFTER_MS = HEARTBEAT_INTERVAL_MS * 3
     private val HEARTBEAT_REQUEST_CODE = 2001
 
     data class BufferedEvent(
@@ -85,6 +86,7 @@ class SyncManager private constructor(context: Context) {
                     appPreferences.migrateIfNeeded()
                     loadPairedDevices()
                     startEventDrivenWorker()
+                    startDeviceStatusMonitor()
                     
                     if (appPreferences.brokerUrl.first().isNotEmpty()) {
                         start()
@@ -130,7 +132,9 @@ class SyncManager private constructor(context: Context) {
                                     processIncomingEvent(msg)
                                 }
                                 database.dao().markAsProcessed(raw.id)
+                                MqttLogger.logApp("Processed raw message ${raw.id} from ${raw.topic}", "TRACE")
                             } catch (e: Exception) {
+                                MqttLogger.logApp("Raw message ${raw.id} failed: ${e.message}", "ERROR")
                                 database.dao().markAsProcessed(raw.id)
                             }
                         }
@@ -144,6 +148,16 @@ class SyncManager private constructor(context: Context) {
         }
         // Initial trigger
         processTrigger.trySend(Unit)
+    }
+
+    private fun startDeviceStatusMonitor() {
+        scope.launch {
+            while (isActive) {
+                delay(60_000L)
+                val threshold = System.currentTimeMillis() - DEVICE_STALE_AFTER_MS
+                database.dao().markDevicesOfflineBefore(threshold)
+            }
+        }
     }
 
     fun loadPairedDevices() {
@@ -210,9 +224,9 @@ class SyncManager private constructor(context: Context) {
     private val CONNECTION_RETRY_DELAY = 10000L // 10s debounce
 
     @SuppressLint("HardwareIds")
-    fun start() {
+    fun start(force: Boolean = false) {
         val now = System.currentTimeMillis()
-        if (now - lastConnectionAttempt < CONNECTION_RETRY_DELAY) {
+        if (!force && now - lastConnectionAttempt < CONNECTION_RETRY_DELAY) {
             MqttLogger.logApp("SyncManager: Connection attempt debounced", "TRACE")
             return
         }
@@ -254,17 +268,18 @@ class SyncManager private constructor(context: Context) {
             }
             
             scheduleNextHeartbeat()
+            sendHeartbeat()
         }
     }
 
     fun handleNetworkChange() {
-        start()
+        start(force = true)
     }
 
     fun restart() {
         scope.launch {
             mqttManager.disconnect().thenAccept {
-                start()
+                start(force = true)
             }
         }
     }
@@ -425,6 +440,9 @@ class SyncManager private constructor(context: Context) {
                 timestamp = System.currentTimeMillis()
             )
             val json = Json.encodeToString(msg)
+            if (!mqttManager.isConnected()) {
+                start(force = true)
+            }
             mqttManager.publish(topic, json.toByteArray()).thenAccept {
                 MqttLogger.log("Heartbeat sent", "SENT local status")
             }.exceptionally { e -> 
@@ -459,10 +477,9 @@ class SyncManager private constructor(context: Context) {
             return
         }
 
-        scheduleBufferPublication(eventId)
-        
         val buffered = BufferedEvent(type, data, System.currentTimeMillis(), 0)
         eventBuffer[eventId] = buffered
+        scheduleBufferPublication(eventId)
     }
 
     fun scheduleBufferPublication(id: String) {
@@ -497,6 +514,24 @@ class SyncManager private constructor(context: Context) {
                 timestamp = timestamp
             )
             val json = Json.encodeToString(msg)
+            val localHash = msg.calculateHash()
+            if (database.dao().countEventHash(localHash) == 0) {
+                database.dao().insertEvent(
+                    EventEntity(
+                        type = type,
+                        data = data,
+                        timestamp = timestamp,
+                        syncStatus = com.vigsync.core.models.SyncStatus.SENT,
+                        direction = com.vigsync.core.models.EventDirection.LOCAL,
+                        sourceDeviceId = getLocalDeviceId(),
+                        sourceDeviceName = android.os.Build.MODEL,
+                        payloadHash = localHash
+                    )
+                )
+            }
+            if (!mqttManager.isConnected()) {
+                start(force = true)
+            }
             mqttManager.publish(topic, json.toByteArray()).thenAccept {
                 MqttLogger.log("Sent $type event", "SENT local alert")
             }.exceptionally { e ->
