@@ -7,6 +7,8 @@ import sys
 import signal
 import select
 import hashlib
+import shlex
+from dataclasses import dataclass
 from datetime import datetime
 
 # --- CONFIGURATION ---
@@ -22,6 +24,7 @@ ADB_PHONE_PATH = os.environ.get("VIGSYNC_ADB_PHONE_PATH", "/storage/emulated/0/A
 STREAM_TIMEOUT = 180 # 3 minutes. (App heartbeats every 60s, so 180s is safe)
 RECENT_REPLAY_LINES = int(os.environ.get("VIGSYNC_RECENT_REPLAY_LINES", "200"))
 RECONNECT_DELAY = int(os.environ.get("VIGSYNC_RECONNECT_DELAY", "5"))
+STREAM_HEALTH_CHECK_INTERVAL = int(os.environ.get("VIGSYNC_STREAM_HEALTH_CHECK_INTERVAL", "10"))
 
 # --- MEMORY LOGGING ---
 memory_logs = []
@@ -34,6 +37,11 @@ MAX_SEEN_FINGERPRINTS = 2000
 _loaded_state_file = None
 pending_publish_by_mid = {}
 pending_spool_ids = set()
+
+@dataclass(frozen=True)
+class RemoteFileSnapshot:
+    identity: str
+    size: int
 
 def log_mem(message, level="INFO"):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -243,6 +251,96 @@ def publish_or_spool(client, topic, payload):
     else:
         log_mem(f"MQTT refused publish for {topic} (rc={info.rc}); keeping spooled.", "WARNING")
 
+def process_stream_line(line, prefix, device_id, mqtt_client):
+    line = line.strip()
+    if line and "|" in line:
+        parts = line.split("|", 1)
+        if len(parts) == 2:
+            suffix, payload = parts
+            full_topic = f"{prefix}/{suffix}/{device_id}"
+            publish_or_spool(mqtt_client, full_topic, payload)
+            return True
+    elif line:
+        log_mem(f"Skipping malformed stream line: {line[:120]}", "WARNING")
+    return False
+
+def parse_remote_file_snapshot(output):
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if not lines or lines[0] == "MISSING":
+        return None
+
+    for line in lines:
+        if not line.startswith("STAT:"):
+            continue
+        parts = line[5:].split(":")
+        if len(parts) >= 3:
+            try:
+                return RemoteFileSnapshot(identity=f"stat:{parts[0]}:{parts[1]}", size=int(parts[2]))
+            except ValueError:
+                break
+
+    size = None
+    for line in lines:
+        if line.startswith("SIZE:"):
+            try:
+                size = int(line[5:])
+            except ValueError:
+                size = None
+            break
+
+    if size is None:
+        return None
+    return RemoteFileSnapshot(identity="fallback", size=size)
+
+def get_remote_file_snapshot(log_path):
+    quoted_path = shlex.quote(log_path)
+    command = (
+        f"if [ -e {quoted_path} ]; then "
+        f"(stat -c 'STAT:%d:%i:%s:%Y' {quoted_path} 2>/dev/null) || "
+        f"(bytes=$(wc -c < {quoted_path} 2>/dev/null | tr -d ' '); echo SIZE:$bytes); "
+        f"else echo MISSING; fi"
+    )
+    try:
+        result = subprocess.run(
+            ["adb", "shell", command],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+    except Exception as e:
+        log_mem(f"Failed to inspect remote export file: {e}", "WARNING")
+        return None
+
+    if result.returncode != 0:
+        log_mem(f"Remote export file inspection failed: {result.stderr.strip()}", "WARNING")
+        return None
+    return parse_remote_file_snapshot(result.stdout)
+
+def evaluate_stream_health(previous_snapshot, current_snapshot):
+    if current_snapshot is None:
+        return True, "remote export file is missing or unreadable"
+    if previous_snapshot is None:
+        return False, None
+    if current_snapshot.identity != previous_snapshot.identity:
+        return True, "remote export file was recreated"
+    if current_snapshot.size < previous_snapshot.size:
+        return True, "remote export file was truncated"
+    return False, None
+
+def stop_tail_process(process):
+    if not process:
+        return
+    try:
+        process.terminate()
+        process.wait(timeout=5)
+    except Exception:
+        try:
+            process.kill()
+        except Exception:
+            pass
+
 # --- MQTT CALLBACKS ---
 
 def on_connect(client, userdata, flags, rc):
@@ -335,8 +433,11 @@ def run_adb_tail_stream(config, mqtt_client):
     log_mem(f"Monitoring device: {device_name} ({device_id})")
     log_mem(f"Stream Source: {log_path}")
 
-    adb_command = ["adb", "shell", f"tail -n {RECENT_REPLAY_LINES} -f {log_path}"]
+    adb_command = ["adb", "shell", f"tail -n {RECENT_REPLAY_LINES} -f {shlex.quote(log_path)}"]
     process = None
+    file_snapshot = get_remote_file_snapshot(log_path)
+    last_data_at = time.monotonic()
+    next_health_check_at = time.monotonic() + STREAM_HEALTH_CHECK_INTERVAL
 
     try:
         process = subprocess.Popen(
@@ -353,38 +454,52 @@ def run_adb_tail_stream(config, mqtt_client):
             if time.time() - last_flush_time > FLUSH_INTERVAL:
                 flush_logs()
 
-            # --- WATCHDOG: Wait for data with timeout ---
-            ready, _, _ = select.select([process.stdout], [], [], STREAM_TIMEOUT)
-            
-            if not ready:
-                log_mem(f"ADB stream stalled (no data for {STREAM_TIMEOUT}s). Heartbeat missed. Restarting...", "WARNING")
-                process.terminate()
-                process.wait()
-                return 
+            if process.poll() is not None:
+                log_mem("ADB stream process died. Check USB connection.", "ERROR")
+                time.sleep(5)
+                return
 
-            line = process.stdout.readline()
-            if not line:
-                if process.poll() is not None:
-                    log_mem("ADB stream process died. Check USB connection.", "ERROR")
-                    time.sleep(5)
-                    return
+            now = time.monotonic()
+            stall_remaining = max(0.0, STREAM_TIMEOUT - (now - last_data_at))
+            health_remaining = max(0.0, next_health_check_at - now)
+            wait_for = min(stall_remaining, health_remaining)
+
+            ready, _, _ = select.select([process.stdout], [], [], wait_for)
+            
+            if ready:
+                line = process.stdout.readline()
+                if not line:
+                    if process.poll() is not None:
+                        log_mem("ADB stream process died. Check USB connection.", "ERROR")
+                        time.sleep(5)
+                        return
+                    continue
+
+                last_data_at = time.monotonic()
+                process_stream_line(line, prefix, device_id, mqtt_client)
                 continue
 
-            line = line.strip()
-            if line and "|" in line:
-                parts = line.split("|", 1)
-                if len(parts) == 2:
-                    suffix, payload = parts
-                    full_topic = f"{prefix}/{suffix}/{device_id}"
-                    publish_or_spool(mqtt_client, full_topic, payload)
-            elif line:
-                log_mem(f"Skipping malformed stream line: {line[:120]}", "WARNING")
+            now = time.monotonic()
+            if now - last_data_at >= STREAM_TIMEOUT:
+                log_mem(f"ADB stream stalled (no data for {STREAM_TIMEOUT}s). Heartbeat missed. Restarting...", "WARNING")
+                stop_tail_process(process)
+                return 
+
+            if now >= next_health_check_at:
+                current_snapshot = get_remote_file_snapshot(log_path)
+                should_restart, reason = evaluate_stream_health(file_snapshot, current_snapshot)
+                if should_restart:
+                    log_mem(f"ADB stream source changed ({reason}). Restarting tail.", "WARNING")
+                    stop_tail_process(process)
+                    return
+                if current_snapshot is not None:
+                    file_snapshot = current_snapshot
+                next_health_check_at = now + STREAM_HEALTH_CHECK_INTERVAL
 
     except Exception as e:
         log_mem(f"Streaming error: {e}", "ERROR")
         time.sleep(2)
-        if process:
-            process.terminate()
+        stop_tail_process(process)
 
 def daemonize():
     if os.path.exists(PID_FILE):

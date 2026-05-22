@@ -59,11 +59,10 @@ class EventExporter(private val context: Context) {
     fun resetFile() {
         val file = getExportFile()
         synchronized(writeLock) {
-            if (file.exists()) {
-                file.delete()
-            }
             try {
-                file.createNewFile()
+                FileOutputStream(file, false).use { fos ->
+                    fos.fd.sync()
+                }
             } catch (e: IOException) {
                 Log.e("EventExporter", "Failed to reset export file", e)
             }

@@ -193,6 +193,66 @@ class VigSyncConsumerTest(unittest.TestCase):
 
         self.assertFalse(Path(vc.SPOOL_FILE).exists())
 
+    def test_remote_snapshot_parser_reads_stat_output(self):
+        snapshot = vc.parse_remote_file_snapshot("STAT:1:42:128:1710000000\n")
+
+        self.assertEqual("stat:1:42", snapshot.identity)
+        self.assertEqual(128, snapshot.size)
+
+    def test_remote_snapshot_parser_falls_back_to_size_output(self):
+        snapshot = vc.parse_remote_file_snapshot("SIZE:64\n")
+
+        self.assertEqual("fallback", snapshot.identity)
+        self.assertEqual(64, snapshot.size)
+
+    def test_stream_health_detects_export_file_truncation(self):
+        previous = vc.RemoteFileSnapshot(identity="stat:1:42", size=512)
+        current = vc.RemoteFileSnapshot(identity="stat:1:42", size=10)
+
+        should_restart, reason = vc.evaluate_stream_health(previous, current)
+
+        self.assertTrue(should_restart)
+        self.assertEqual("remote export file was truncated", reason)
+
+    def test_stream_health_detects_export_file_recreate(self):
+        previous = vc.RemoteFileSnapshot(identity="stat:1:42", size=512)
+        current = vc.RemoteFileSnapshot(identity="stat:1:99", size=512)
+
+        should_restart, reason = vc.evaluate_stream_health(previous, current)
+
+        self.assertTrue(should_restart)
+        self.assertEqual("remote export file was recreated", reason)
+
+    def test_stream_health_allows_file_growth_without_restart(self):
+        previous = vc.RemoteFileSnapshot(identity="stat:1:42", size=512)
+        current = vc.RemoteFileSnapshot(identity="stat:1:42", size=1024)
+
+        should_restart, reason = vc.evaluate_stream_health(previous, current)
+
+        self.assertFalse(should_restart)
+        self.assertIsNone(reason)
+
+    def test_malformed_stream_line_does_not_touch_spool_or_replay_state(self):
+        client = FakeMqttClient(connected=True)
+
+        self.assertFalse(vc.process_stream_line("not-a-valid-stream-line", "vigsync", "device", client))
+
+        self.assertFalse(Path(vc.SPOOL_FILE).exists())
+        self.assertFalse(Path(vc.STATE_FILE).exists())
+        self.assertEqual([], client.published)
+
+    def test_valid_stream_line_after_reset_restart_publishes_normally(self):
+        previous = vc.RemoteFileSnapshot(identity="stat:1:42", size=512)
+        current = vc.RemoteFileSnapshot(identity="stat:1:42", size=0)
+        should_restart, _ = vc.evaluate_stream_health(previous, current)
+        client = FakeMqttClient(connected=True)
+
+        self.assertTrue(should_restart)
+        self.assertTrue(vc.process_stream_line('events|{"type":"SMS"}', "vigsync", "device", client))
+
+        self.assertEqual([("vigsync/events/device", '{"type":"SMS"}', 1)], client.published)
+        self.assertEqual(1, len(self.read_spool()))
+
     def test_load_config_falls_back_to_existing_local_config_when_adb_pull_fails(self):
         expected = {"device_id": "phone-1", "broker_url": "localhost"}
         Path(vc.CONFIG_FILE).write_text(json.dumps(expected), encoding="utf-8")
