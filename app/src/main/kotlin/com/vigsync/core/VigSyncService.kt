@@ -78,7 +78,11 @@ class VigSyncService : Service() {
                 Log.d("VigSyncService", "Service Started")
                 updateForeground()
             }
-            ACTION_STOP -> stopSelf()
+            ACTION_STOP -> {
+                stopMonitoring()
+                SyncManager.getInstance(applicationContext).stop()
+                stopSelf()
+            }
             ACTION_START_MONITORING -> startMonitoring()
             ACTION_STOP_MONITORING -> stopMonitoring()
             null -> {
@@ -102,15 +106,18 @@ class VigSyncService : Service() {
 
     private fun startMonitoring() {
         if (isMonitoring) return
+        isMonitoring = true
         updateForeground()
         
         val canReadCallLog = androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.READ_CALL_LOG) == android.content.pm.PackageManager.PERMISSION_GRANTED
         if (canReadCallLog) {
             callLogObserver = CallLogObserver(this).also { it.register() }
+        } else {
+            Log.w("VigSyncService", "Call log observer inactive: READ_CALL_LOG denied")
         }
 
         registerSubscriptionListeners()
-        isMonitoring = true
+        updateForeground()
         Log.d("VigSyncService", "Monitoring active (Multi-SIM observers started)")
     }
 

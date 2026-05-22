@@ -3,14 +3,22 @@ import subprocess
 import signal
 import time
 import sys
+from pathlib import Path
 
 # --- CONFIGURATION ---
 PID_FILE = "vigsync_consumer.pid"
 CONSUMER_SCRIPT = "vigsync_consumer.py"
 LOG_FILE = "vigsync_consumer.log"
 LIVE_LOG_RAM = "/dev/shm/vigsync_live.log"
-WORKING_DIR = "/home/valahus/vigsync"
+WORKING_DIR = os.environ.get("VIGSYNC_WORKING_DIR", str(Path(__file__).resolve().parent))
 SERVICE_NAME = "vigsync.service"
+SERVICE_USER = os.environ.get("VIGSYNC_SERVICE_USER", os.environ.get("USER", "pi"))
+
+def service_path():
+    return f"/etc/systemd/system/{SERVICE_NAME}"
+
+def run_command(args, **kwargs):
+    return subprocess.run(args, text=True, **kwargs)
 
 def get_pid():
     if os.path.exists(PID_FILE):
@@ -28,10 +36,14 @@ def is_running():
             os.kill(pid, 0)
             return True
         except OSError:
+            try:
+                os.remove(PID_FILE)
+            except OSError:
+                pass
             return False
     
     try:
-        result = subprocess.run(["systemctl", "is-active", "--quiet", SERVICE_NAME])
+        result = run_command(["systemctl", "is-active", "--quiet", SERVICE_NAME])
         return result.returncode == 0
     except:
         return False
@@ -41,14 +53,20 @@ def start_consumer():
         print("[!] Consumer is already running.")
         return
     
-    if os.path.exists(f"/etc/systemd/system/{SERVICE_NAME}"):
+    if os.path.exists(service_path()):
         print("[*] Starting via systemd...")
-        os.system(f"sudo systemctl start {SERVICE_NAME}")
+        run_command(["sudo", "systemctl", "start", SERVICE_NAME])
     else:
         print("[*] Starting VigSync Consumer in background (RAM logging enabled)...")
         # Redirect stdout to RAM for live viewing if not using systemd
-        cmd = f"nohup {sys.executable} {os.path.join(WORKING_DIR, CONSUMER_SCRIPT)} --background > {LIVE_LOG_RAM} 2>&1 &"
-        os.system(cmd)
+        log_handle = open(LIVE_LOG_RAM, "a", encoding="utf-8")
+        subprocess.Popen(
+            [sys.executable, os.path.join(WORKING_DIR, CONSUMER_SCRIPT), "--background"],
+            cwd=WORKING_DIR,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
     
     time.sleep(1)
     if is_running():
@@ -57,9 +75,9 @@ def start_consumer():
         print("[!] Start failed. Check logs.")
 
 def stop_consumer():
-    if os.path.exists(f"/etc/systemd/system/{SERVICE_NAME}"):
+    if os.path.exists(service_path()):
         print("[*] Stopping via systemd...")
-        os.system(f"sudo systemctl stop {SERVICE_NAME}")
+        run_command(["sudo", "systemctl", "stop", SERVICE_NAME])
     
     pid = get_pid()
     if pid:
@@ -71,7 +89,8 @@ def stop_consumer():
                 time.sleep(1)
             if os.path.exists(PID_FILE):
                 os.remove(PID_FILE)
-        except: pass
+        except Exception as exc:
+            print(f"[!] Could not stop PID {pid}: {exc}")
     
     print("[+] Stopped.")
 
@@ -80,14 +99,18 @@ def setup_autostart():
     service_content = f"""[Unit]
 Description=VigSync MQTT Consumer Service
 After=network.target
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 ExecStart={sys.executable} {os.path.join(WORKING_DIR, CONSUMER_SCRIPT)}
 WorkingDirectory={WORKING_DIR}
-StandardOutput=inherit
-StandardError=inherit
+StandardOutput=append:{os.path.join(WORKING_DIR, LOG_FILE)}
+StandardError=append:{os.path.join(WORKING_DIR, LOG_FILE)}
 Restart=always
-User=valahus
+RestartSec=5
+User={SERVICE_USER}
+Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=multi-user.target
@@ -97,11 +120,11 @@ WantedBy=multi-user.target
         with open(temp_file, "w") as f:
             f.write(service_content)
         
-        os.system(f"sudo mv {temp_file} /etc/systemd/system/{SERVICE_NAME}")
-        os.system(f"sudo chown root:root /etc/systemd/system/{SERVICE_NAME}")
-        os.system(f"sudo chmod 644 /etc/systemd/system/{SERVICE_NAME}")
-        os.system("sudo systemctl daemon-reload")
-        os.system(f"sudo systemctl enable {SERVICE_NAME}")
+        run_command(["sudo", "mv", temp_file, service_path()])
+        run_command(["sudo", "chown", "root:root", service_path()])
+        run_command(["sudo", "chmod", "644", service_path()])
+        run_command(["sudo", "systemctl", "daemon-reload"])
+        run_command(["sudo", "systemctl", "enable", SERVICE_NAME])
         print("[+] Setup complete!")
     except Exception as e:
         print(f"[!] Setup failed: {e}")
@@ -109,13 +132,13 @@ WantedBy=multi-user.target
 def view_live_logs():
     print("\n--- ENTERING REAL-TIME LOG VIEW (Press Ctrl+C to exit) ---")
     try:
-        if os.path.exists(f"/etc/systemd/system/{SERVICE_NAME}"):
+        if os.path.exists(service_path()):
             # Use journalctl for systemd services
-            subprocess.run(["journalctl", "-u", SERVICE_NAME, "-f", "-n", "50"])
+            run_command(["journalctl", "-u", SERVICE_NAME, "-f", "-n", "50"])
         else:
             # Use RAM log for manual background runs
             if os.path.exists(LIVE_LOG_RAM):
-                subprocess.run(["tail", "-f", LIVE_LOG_RAM])
+                run_command(["tail", "-f", LIVE_LOG_RAM])
             else:
                 print("[!] No live log found in RAM. Try restarting the consumer.")
     except KeyboardInterrupt:
@@ -125,7 +148,7 @@ def view_sd_logs():
     full_log_path = os.path.join(WORKING_DIR, LOG_FILE)
     if os.path.exists(full_log_path):
         print(f"--- Tail of {LOG_FILE} (Last sync/error) ---")
-        subprocess.run(["tail", "-n", "20", full_log_path])
+        run_command(["tail", "-n", "20", full_log_path])
         print("---------------------------")
     else:
         print("[!] No log file found yet.")
@@ -133,7 +156,7 @@ def view_sd_logs():
 def menu():
     while True:
         status = "RUNNING" if is_running() else "STOPPED"
-        is_installed = os.path.exists(f"/etc/systemd/system/{SERVICE_NAME}")
+        is_installed = os.path.exists(service_path())
         install_status = "[Auto-start: ENABLED]" if is_installed else "[Auto-start: NOT SETUP]"
         
         print(f"\n=== VigSync RPi Manager ===")
@@ -169,6 +192,6 @@ def menu():
 if __name__ == "__main__":
     try:
         os.chdir(WORKING_DIR)
-    except:
-        pass
+    except Exception as exc:
+        print(f"[!] Could not enter working directory {WORKING_DIR}: {exc}")
     menu()

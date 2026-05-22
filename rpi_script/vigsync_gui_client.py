@@ -1,5 +1,6 @@
 
 import base64
+import hashlib
 import json
 import queue
 import ssl
@@ -229,6 +230,7 @@ class VigSyncGuiClient:
         self.connected = False
         self.active_topics: list[str] = []
         self.events: list[EventViewModel] = []
+        self.seen_message_keys: set[str] = set()
         self.log_lines: list[str] = []
         self.next_event_id = 1
         self.active_scroll_canvas: tk.Canvas | None = None
@@ -510,8 +512,13 @@ class VigSyncGuiClient:
         self.enqueue_log("INFO", "Pairing JSON applied to settings.")
 
     def build_config(self) -> PairingConfig:
+        broker_url = self.broker_var.get().strip()
+        for scheme in ("mqtt://", "tcp://", "ssl://"):
+            if broker_url.lower().startswith(scheme):
+                broker_url = broker_url[len(scheme):]
+        broker_url = broker_url.rstrip("/")
         return PairingConfig(
-            broker_url=self.broker_var.get().strip(),
+            broker_url=broker_url,
             port=int(self.port_var.get().strip()),
             username=self.username_var.get().strip(),
             password=self.password_var.get().strip(),
@@ -543,6 +550,9 @@ class VigSyncGuiClient:
     def _connect_worker(self, config: PairingConfig) -> None:
         client_id = f"vigsync_gui_{int(time.time())}"
         client = mqtt.Client(client_id=client_id, clean_session=True)
+        client.reconnect_delay_set(min_delay=1, max_delay=30)
+        client.max_inflight_messages_set(20)
+        client.max_queued_messages_set(500)
         if config.username or config.password:
             client.username_pw_set(config.username, config.password)
         if config.use_tls:
@@ -576,7 +586,11 @@ class VigSyncGuiClient:
             self.message_queue.put(("log", self.format_log("ERROR", f"MQTT connect rejected with rc={rc}")))
             return
         for topic in self.active_topics:
-            client.subscribe(topic, qos=1)
+            result, mid = client.subscribe(topic, qos=1)
+            if result != mqtt.MQTT_ERR_SUCCESS:
+                self.message_queue.put(("log", self.format_log("ERROR", f"Subscribe failed for {topic} rc={result}")))
+            else:
+                self.message_queue.put(("log", self.format_log("INFO", f"Subscribe requested for {topic} mid={mid}")))
         self.connected = True
         self.message_queue.put(("status", "Connected"))
         self.message_queue.put(("log", self.format_log("INFO", f"Connected and subscribed to: {', '.join(self.active_topics)}")))
@@ -590,6 +604,13 @@ class VigSyncGuiClient:
     def _on_message(self, _client: mqtt.Client, _userdata, message: mqtt.MQTTMessage) -> None:
         try:
             payload_text = message.payload.decode("utf-8")
+            message_key = hashlib.sha256(f"{message.topic}\0{payload_text}".encode("utf-8", errors="replace")).hexdigest()
+            if message_key in self.seen_message_keys:
+                self.message_queue.put(("log", self.format_log("TRACE", f"Duplicate message ignored on {message.topic}")))
+                return
+            self.seen_message_keys.add(message_key)
+            if len(self.seen_message_keys) > MAX_EVENTS * 4:
+                self.seen_message_keys = set(list(self.seen_message_keys)[-MAX_EVENTS * 2:])
             raw_message = json.loads(payload_text)
             event = self.build_event_view_model(message.topic, raw_message, payload_text)
             self.message_queue.put(("event", event))
