@@ -154,7 +154,7 @@ class SyncManager private constructor(context: Context) {
         scope.launch {
             while (isActive) {
                 delay(60_000L)
-                val threshold = System.currentTimeMillis() - DEVICE_STALE_AFTER_MS
+                val threshold = DeviceStalenessPolicy.offlineThreshold(System.currentTimeMillis(), DEVICE_STALE_AFTER_MS)
                 database.dao().markDevicesOfflineBefore(threshold)
             }
         }
@@ -461,25 +461,28 @@ class SyncManager private constructor(context: Context) {
 
     fun publishEvent(type: String, data: String) {
         val now = System.currentTimeMillis()
-        val eventKey = "${type}_$data"
+        val eventKey = EventBufferPolicy.eventKey(type, data)
         
         val lastSeen = eventDebounceCache[eventKey] ?: 0L
-        if (now - lastSeen < DEBOUNCE_WINDOW) {
+        if (!EventBufferPolicy.shouldAcceptEvent(lastSeenAt = lastSeen, now = now, debounceWindowMs = DEBOUNCE_WINDOW)) {
             MqttLogger.logApp("SyncManager: Ignored duplicate $type event within window", "TRACE")
             return
         }
         eventDebounceCache[eventKey] = now
 
-        val eventId = "${type}_${data.hashCode()}"
+        val eventId = EventBufferPolicy.eventId(type, data)
         
-        if (type == "CALL" || type.contains("MISSED")) {
-            publishNow(type, data, System.currentTimeMillis())
-            return
+        when (EventBufferPolicy.publishMode(type)) {
+            EventPublishMode.IMMEDIATE -> {
+                publishNow(type, data, System.currentTimeMillis())
+                return
+            }
+            EventPublishMode.BUFFERED -> {
+                val buffered = BufferedEvent(type, data, System.currentTimeMillis(), 0)
+                eventBuffer[eventId] = buffered
+                scheduleBufferPublication(eventId)
+            }
         }
-
-        val buffered = BufferedEvent(type, data, System.currentTimeMillis(), 0)
-        eventBuffer[eventId] = buffered
-        scheduleBufferPublication(eventId)
     }
 
     fun scheduleBufferPublication(id: String) {

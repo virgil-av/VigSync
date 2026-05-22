@@ -64,3 +64,43 @@ Fix the local Android SDK/build-tools verification path first, then add focused 
 ### Recommended Next Task
 
 Add focused tests or testable helpers for MQTT publish queueing, event buffering, and device stale/offline behavior.
+
+## 2026-05-22 23:07 EEST - Add reliability helper unit tests
+
+- Commit: pending documentation commit for this task.
+- Objective: add focused JVM unit coverage for the reliability behavior introduced in the MQTT sync engine.
+- Why: the previous reliability pass added important queueing, buffering, and stale-device behavior that needed fast automated coverage without requiring Android devices, MQTT brokers, or HiveMQ client internals.
+
+### Work Completed
+
+- Added `MqttPublishQueue` as a pure-Kotlin bounded FIFO helper for disconnected publish buffering.
+- Added `EventBufferPolicy` as a pure-Kotlin helper for event keys, debounce acceptance, and immediate-vs-buffered publish decisions.
+- Added `DeviceStalenessPolicy` as a pure-Kotlin helper for stale/offline threshold calculation.
+- Refactored `MqttManager` and `SyncManager` only enough to use these helpers while preserving existing behavior.
+- Added JVM unit tests under `app/src/test/kotlin` for queue order, capacity eviction, payload copying, requeue-on-failure ordering, event buffering/debounce, and stale/offline threshold behavior.
+
+### Files Changed
+
+- `app/src/main/kotlin/com/vigsync/core/mqtt/MqttPublishQueue.kt`
+- `app/src/main/kotlin/com/vigsync/core/EventBufferPolicy.kt`
+- `app/src/main/kotlin/com/vigsync/core/DeviceStalenessPolicy.kt`
+- `app/src/main/kotlin/com/vigsync/core/mqtt/MqttManager.kt`
+- `app/src/main/kotlin/com/vigsync/core/SyncManager.kt`
+- `app/src/test/kotlin/com/vigsync/core/mqtt/MqttPublishQueueTest.kt`
+- `app/src/test/kotlin/com/vigsync/core/EventBufferPolicyTest.kt`
+- `app/src/test/kotlin/com/vigsync/core/DeviceStalenessPolicyTest.kt`
+
+### Verification
+
+- Passed: `./gradlew :app:testDebugUnitTest`
+- Passed: `./gradlew :app:compileDebugKotlin`
+- Passed: `./gradlew :app:lintDebug`
+- Remaining warnings are non-blocking and unchanged in character: deprecated Gradle/Android options, Room schema export warning, deprecated telephony APIs, Kotlin cleanup warnings in `MqttManager`, and deprecated Compose auto-mirrored icons.
+
+### Known Blockers
+
+- Online push is still blocked by GitHub permissions for the current SSH identity: `Permission to virgil-av/VigSync.git denied to 24vlh`.
+
+### Recommended Next Task
+
+Continue hardening background survival: battery optimization UX, boot recovery, network recovery, and service state reporting.

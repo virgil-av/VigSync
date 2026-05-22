@@ -4,11 +4,10 @@ This backlog is branch-local. Keep source branches untouched; all implementation
 
 ## Now
 
-- Add focused tests or testable helpers for MQTT publish queueing, event buffering, and device stale/offline behavior.
+- Continue hardening background survival: battery optimization UX, boot recovery, network recovery, and service state reporting.
 
 ## Next
 
-- Continue hardening background survival: battery optimization UX, boot recovery, network recovery, and service state reporting.
 - Add a practical smoke-test checklist for connect, disconnect, reconnect, publish-while-offline, heartbeat/status, event receive, and notification display.
 
 ## Later
@@ -26,3 +25,4 @@ This backlog is branch-local. Keep source branches untouched; all implementation
 - Stabilized the MQTT sync engine in commit `058b4d85b4c47704837a38559703c958f7e11e3f`.
 - Added branch-local task log and backlog documentation.
 - Restored local Android verification using `/home/vlahus/Android/Sdk`; `compileDebugKotlin` and `lintDebug` now pass on this branch.
+- Added JVM unit tests and pure-Kotlin helpers for MQTT publish queueing, event buffering/debounce, and stale/offline device behavior.

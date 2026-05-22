@@ -35,11 +35,10 @@ class MqttManager {
     private val connectionMutex = Mutex()
     private val pendingSubscriptions = mutableListOf<String>()
     private val activeSubscriptions = mutableSetOf<String>()
-    private val pendingPublishes = ArrayDeque<PendingPublish>()
+    private val pendingPublishes = MqttPublishQueue(MAX_PENDING_PUBLISHES)
 
     private var currentConfig: ConnectionConfig? = null
     private var pendingConfig: ConnectionConfig? = null
-    private val MAX_PENDING_PUBLISHES = 250
 
     data class ConnectionConfig(
         val url: String,
@@ -48,11 +47,6 @@ class MqttManager {
         val useTls: Boolean,
         val user: String?,
         val pass: String?
-    )
-
-    private data class PendingPublish(
-        val topic: String,
-        val payload: ByteArray
     )
 
     // Tied to Application lifecycle
@@ -422,11 +416,10 @@ class MqttManager {
 
     private fun enqueuePublish(topic: String, payload: ByteArray) {
         synchronized(pendingPublishes) {
-            if (pendingPublishes.size >= MAX_PENDING_PUBLISHES) {
-                pendingPublishes.removeFirst()
+            val result = pendingPublishes.enqueue(topic, payload)
+            if (result.droppedOldest) {
                 MqttLogger.log("Publish queue full; oldest message discarded", "WARNING")
             }
-            pendingPublishes.addLast(PendingPublish(topic, payload.copyOf()))
         }
         MqttLogger.log("Publish queued: $topic", "QUEUED")
     }
@@ -435,14 +428,16 @@ class MqttManager {
         scope.launch {
             while (isConnected()) {
                 val next = synchronized(pendingPublishes) {
-                    if (pendingPublishes.isEmpty()) null else pendingPublishes.removeFirst()
+                    pendingPublishes.poll()
                 } ?: break
 
                 try {
                     publish(next.topic, next.payload).await()
                     MqttLogger.log("Queued publish delivered: ${next.topic}", "SENT")
                 } catch (e: Exception) {
-                    enqueuePublish(next.topic, next.payload)
+                    synchronized(pendingPublishes) {
+                        pendingPublishes.requeueFirst(next)
+                    }
                     MqttLogger.log("Queued publish failed: ${e.message}", "ERROR")
                     break
                 }
@@ -466,6 +461,9 @@ class MqttManager {
             }
             synchronized(activeSubscriptions) {
                 activeSubscriptions.clear()
+            }
+            synchronized(pendingPublishes) {
+                pendingPublishes.clear()
             }
             currentConfig = null
         }
@@ -501,5 +499,9 @@ class MqttManager {
                 cancel(true)
             }
         }
+    }
+
+    companion object {
+        private const val MAX_PENDING_PUBLISHES = 250
     }
 }
