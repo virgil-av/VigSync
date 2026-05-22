@@ -104,7 +104,7 @@ Improve Pi consumer durability with persistent read offsets or explicit acknowle
 
 ## 2026-05-22 23:29 EEST - Add durable Pi consumer delivery tracking
 
-- Commit: pending commit for this task.
+- Commit: `ee83bb7970d4a5601723e7fdb20e8f13a07e2cbb`
 - Objective: make the Raspberry Pi consumer resilient to MQTT disconnects, process restarts, and ADB tail replay without losing or duplicating phone-exported events.
 - Why: the prior spool treated a successful Paho `publish()` call as delivered, even though QoS 1 delivery is only complete after MQTT acknowledgement. Replay dedupe was also memory-only, so ADB reconnects or process restarts could replay recently tailed lines.
 
